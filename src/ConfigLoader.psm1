@@ -24,6 +24,7 @@ class PowerShieldConfiguration {
     [array]$Webhooks
     [hashtable]$Enterprise
     [hashtable]$Hooks
+    [hashtable]$Performance
 
     PowerShieldConfiguration() {
         $this.Version = '1.0'
@@ -32,6 +33,7 @@ class PowerShieldConfiguration {
             max_file_size = 10485760
             timeout_seconds = 30
             parallel_analysis = $true
+            worker_threads = 0  # 0 = auto-detect based on CPU cores
             exclude_paths = @('**/node_modules/**', '**/dist/**', '**/*.min.ps1', '.github/**')
             exclude_files = @('*.tests.ps1')
         }
@@ -78,12 +80,19 @@ class PowerShieldConfiguration {
             max_warnings = 50
             baseline_mode = $false
             baseline_file = '.powershield-baseline.sarif'
+            incremental_mode = $false  # Only analyze changed files in CI/CD
         }
         $this.Hooks = @{
             enabled = $true
             block_on = @('Critical', 'High')
             auto_fix = $false
             skip_on_no_violations = $true
+        }
+        $this.Performance = @{
+            enable_cache = $true
+            cache_dir = '.powershield-cache'
+            cache_max_age = 86400  # 24 hours in seconds
+            track_metrics = $true
         }
     }
 
@@ -97,6 +106,7 @@ class PowerShieldConfiguration {
         if ($other.ContainsKey('webhooks')) { $this.Webhooks = $other.webhooks }
         if ($other.ContainsKey('enterprise')) { $this.Enterprise = $other.enterprise }
         if ($other.ContainsKey('hooks')) { $this.Hooks = $this.MergeHashtables($this.Hooks, $other.hooks) }
+        if ($other.ContainsKey('performance')) { $this.Performance = $this.MergeHashtables($this.Performance, $other.performance) }
         
         # Merge rules specially to preserve per-rule config
         if ($other.ContainsKey('rules')) {
@@ -134,6 +144,7 @@ class PowerShieldConfiguration {
             webhooks = $this.Webhooks
             enterprise = $this.Enterprise
             hooks = $this.Hooks
+            performance = $this.Performance
         }
     }
 }

@@ -5,6 +5,10 @@ security-report.md
 test-*.json
 test-*.sarif
 test-*.md
+
+# Cache directories
+.powershield-cache/
+**/.powershield-cache/
 # Legacy filenames (for backward compatibility during transition)
 psts-results.json
 psts-results.sarif

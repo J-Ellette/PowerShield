@@ -9,6 +9,7 @@ analysis:
   max_file_size: 10485760  # 10MB
   timeout_seconds: 30
   parallel_analysis: true
+  worker_threads: 0  # 0 = auto-detect based on CPU cores, or specify number
   
   # Path exclusions (glob patterns)
   exclude_paths:
@@ -84,6 +85,7 @@ ci:
   max_warnings: 50
   baseline_mode: false
   baseline_file: ".powershield-baseline.sarif"
+  incremental_mode: false  # Only analyze changed files (Git-aware)
 
 # Git Hooks Configuration
 hooks:
@@ -91,6 +93,13 @@ hooks:
   block_on: ["Critical", "High"]  # Severities that block commits
   auto_fix: false  # Apply fixes automatically before commit (experimental)
   skip_on_no_violations: true
+
+# Performance & Optimization
+performance:
+  enable_cache: true
+  cache_dir: ".powershield-cache"
+  cache_max_age: 86400  # 24 hours in seconds
+  track_metrics: true
 
 # Webhooks (optional)
 # webhooks:

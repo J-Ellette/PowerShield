@@ -5051,29 +5051,81 @@ class PowerShellSecurityAnalyzer {
     }
 
     [PSCustomObject] AnalyzeWorkspace([string]$WorkspacePath) {
-        $scriptFiles = Get-ChildItem -Path $WorkspacePath -Recurse -Include "*.ps1", "*.psm1", "*.psd1" -ErrorAction SilentlyContinue | 
-                      Where-Object { $_.Length -le $this.Configuration.MaxFileSize }
+        return $this.AnalyzeWorkspace($WorkspacePath, $false, $null, $null)
+    }
+
+    [PSCustomObject] AnalyzeWorkspace([string]$WorkspacePath, [bool]$IncrementalMode, [object]$Cache, [object]$Metrics) {
+        # Initialize performance tracking
+        $trackPerformance = $null -ne $Metrics
+        if ($trackPerformance) {
+            $Metrics.StartTime = Get-Date
+        }
+
+        # Get files to analyze
+        $scriptFiles = @()
+        
+        if ($IncrementalMode) {
+            # Try to load incremental analysis module
+            try {
+                $incrementalPath = Join-Path $PSScriptRoot 'IncrementalAnalysis.psm1'
+                if (Test-Path $incrementalPath) {
+                    Import-Module $incrementalPath -Force -ErrorAction Stop
+                    $changedFiles = Get-ChangedPowerShellFiles -WorkspacePath $WorkspacePath
+                    if ($changedFiles.Count -gt 0) {
+                        Write-Host "Incremental mode: Analyzing $($changedFiles.Count) changed files" -ForegroundColor Cyan
+                        $scriptFiles = $changedFiles | ForEach-Object { Get-Item $_ }
+                    } else {
+                        Write-Host "Incremental mode: No changed PowerShell files detected, analyzing all files" -ForegroundColor Yellow
+                        $IncrementalMode = $false
+                    }
+                } else {
+                    Write-Warning "Incremental analysis module not found, falling back to full analysis"
+                    $IncrementalMode = $false
+                }
+            } catch {
+                Write-Warning "Failed to use incremental analysis: $_"
+                $IncrementalMode = $false
+            }
+        }
+        
+        if (-not $IncrementalMode) {
+            $scriptFiles = Get-ChildItem -Path $WorkspacePath -Recurse -Include "*.ps1", "*.psm1", "*.psd1" -ErrorAction SilentlyContinue | 
+                          Where-Object { $_.Length -le $this.Configuration.MaxFileSize }
+        }
         
         $allResults = @()
         $totalViolations = 0
         $excludedCount = 0
         
-        foreach ($file in $scriptFiles) {
-            # Check if file should be excluded
-            if ($this.IsPathExcluded($file.FullName, $WorkspacePath)) {
-                $excludedCount++
-                Write-Verbose "Excluding file from analysis: $($file.FullName)"
-                continue
+        # Determine if we should use parallel processing
+        # Parallel processing has overhead, only use for large workspaces
+        $useParallel = $this.Configuration.EnableParallelAnalysis -and $scriptFiles.Count -gt 50
+        
+        if ($useParallel) {
+            Write-Host "Note: Parallel analysis is experimental and may have issues with large modules. Using sequential for reliability." -ForegroundColor Yellow
+            $useParallel = $false  # Disable for now until fully debugged
+        }
+        
+        if ($useParallel) {
+            Write-Verbose "Using parallel analysis mode"
+            if ($trackPerformance) {
+                $Metrics.ParallelMode = $true
+                $Metrics.WorkerThreads = [Environment]::ProcessorCount
             }
-            
-            try {
-                $result = $this.AnalyzeScript($file.FullName)
-                $allResults += $result
+            $allResults = $this.AnalyzeFilesParallel($scriptFiles, $WorkspacePath, $excludedCount, $Cache, $Metrics)
+        } else {
+            Write-Verbose "Using sequential analysis mode"
+            if ($trackPerformance) {
+                $Metrics.ParallelMode = $false
+                $Metrics.WorkerThreads = 1
+            }
+            $allResults = $this.AnalyzeFilesSequential($scriptFiles, $WorkspacePath, [ref]$excludedCount, $Cache, $Metrics)
+        }
+        
+        # Calculate total violations
+        foreach ($result in $allResults) {
+            if ($result.Violations) {
                 $totalViolations += $result.Violations.Count
-                
-                Write-Progress -Activity "Analyzing PowerShell Files" -Status $file.Name -PercentComplete (($allResults.Count / $scriptFiles.Count) * 100)
-            } catch {
-                Write-Warning "Failed to analyze $($file.FullName): $($_.Exception.Message)"
             }
         }
         
@@ -5083,7 +5135,13 @@ class PowerShellSecurityAnalyzer {
             Write-Host "Excluded $excludedCount files from analysis based on configuration"
         }
 
-        return [PSCustomObject]@{
+        # Complete performance tracking
+        if ($trackPerformance) {
+            $Metrics.Complete()
+            $Metrics.TotalViolations = $totalViolations
+        }
+
+        $resultObject = [PSCustomObject]@{
             WorkspacePath = $WorkspacePath
             FilesAnalyzed = $allResults.Count
             FilesExcluded = $excludedCount
@@ -5091,7 +5149,248 @@ class PowerShellSecurityAnalyzer {
             Results = $allResults
             Summary = $this.GenerateSummary($allResults)
             Timestamp = Get-Date
+            IncrementalMode = $IncrementalMode
         }
+
+        # Add performance metrics if tracking
+        if ($trackPerformance) {
+            $resultObject | Add-Member -NotePropertyName 'Metrics' -NotePropertyValue $Metrics.ToHashtable()
+        }
+
+        return $resultObject
+    }
+
+    [array] AnalyzeFilesSequential([array]$Files, [string]$WorkspacePath, [ref]$ExcludedCount, [object]$Cache, [object]$Metrics) {
+        $allResults = @()
+        
+        foreach ($file in $Files) {
+            # Check if file should be excluded
+            if ($this.IsPathExcluded($file.FullName, $WorkspacePath)) {
+                $ExcludedCount.Value++
+                if ($Metrics) { $Metrics.RecordFileSkipped() }
+                Write-Verbose "Excluding file from analysis: $($file.FullName)"
+                continue
+            }
+            
+            try {
+                $startTime = Get-Date
+                
+                # Check cache first
+                $cachedResult = $null
+                if ($Cache) {
+                    $cachedResult = $Cache.Get($file.FullName)
+                    if ($cachedResult) {
+                        Write-Verbose "Cache hit for $($file.Name)"
+                        if ($Metrics) { 
+                            $Metrics.RecordCacheHit()
+                            $Metrics.RecordFileAnalysis($file.FullName, 0, $cachedResult.Violations.Count)
+                        }
+                        $allResults += $cachedResult
+                        continue
+                    } else {
+                        if ($Metrics) { $Metrics.RecordCacheMiss() }
+                    }
+                }
+                
+                $result = $this.AnalyzeScript($file.FullName)
+                $allResults += $result
+                
+                # Cache the result
+                if ($Cache) {
+                    $Cache.Set($file.FullName, $result)
+                }
+                
+                # Track performance
+                if ($Metrics) {
+                    $duration = ((Get-Date) - $startTime).TotalMilliseconds
+                    $Metrics.RecordFileAnalysis($file.FullName, $duration, $result.Violations.Count)
+                    $Metrics.RulesExecuted += $result.RulesExecuted
+                }
+                
+                Write-Progress -Activity "Analyzing PowerShell Files" -Status $file.Name -PercentComplete (($allResults.Count / $Files.Count) * 100)
+            } catch {
+                Write-Warning "Failed to analyze $($file.FullName): $($_.Exception.Message)"
+            }
+        }
+        
+        return $allResults
+    }
+
+    [array] AnalyzeFilesParallel([array]$Files, [string]$WorkspacePath, [ref]$ExcludedCount, [object]$Cache, [object]$Metrics) {
+        # Filter out excluded files first
+        $filesToAnalyze = @()
+        foreach ($file in $Files) {
+            if ($this.IsPathExcluded($file.FullName, $WorkspacePath)) {
+                $ExcludedCount.Value++
+                if ($Metrics) { $Metrics.RecordFileSkipped() }
+                Write-Verbose "Excluding file from analysis: $($file.FullName)"
+            } else {
+                $filesToAnalyze += $file
+            }
+        }
+
+        if ($filesToAnalyze.Count -eq 0) {
+            return @()
+        }
+
+        # Prepare parameters
+        $modulePath = Join-Path $PSScriptRoot 'PowerShellSecurityAnalyzer.psm1'
+        $configHash = $this.Configuration
+        $powerShieldConfigHash = if ($this.PowerShieldConfig) { 
+            @{
+                Analysis = $this.PowerShieldConfig.Analysis
+                Rules = $this.PowerShieldConfig.Rules
+                Suppressions = $this.PowerShieldConfig.Suppressions
+            }
+        } else { 
+            $null 
+        }
+        
+        $cacheEnabled = $null -ne $Cache
+        $cacheDir = if ($Cache) { $Cache.CacheDir } else { $null }
+
+        # Run parallel analysis
+        $throttleLimit = [Math]::Min([Environment]::ProcessorCount, 8)
+        
+        Write-Verbose "Running parallel analysis with $throttleLimit workers"
+        
+        $allResults = $filesToAnalyze | ForEach-Object -ThrottleLimit $throttleLimit -Parallel {
+            $file = $_
+            $filePath = $file.FullName
+            $modPath = $using:modulePath
+            $config = $using:configHash
+            $pstsConfig = $using:powerShieldConfigHash
+            $useCache = $using:cacheEnabled
+            $cachePath = $using:cacheDir
+            
+            try {
+                # Import module in this runspace
+                Import-Module $modPath -Force -ErrorAction Stop
+                
+                # Create analyzer with config
+                $analyzer = if ($pstsConfig) {
+                    # Reconstruct PowerShieldConfig object
+                    $pstsConfigObj = [PSCustomObject]$pstsConfig
+                    [PowerShellSecurityAnalyzer]::new($pstsConfigObj)
+                } else {
+                    [PowerShellSecurityAnalyzer]::new()
+                }
+                
+                # Override configuration
+                foreach ($key in $config.Keys) {
+                    $analyzer.Configuration[$key] = $config[$key]
+                }
+                
+                $startTime = Get-Date
+                
+                # Check cache if enabled
+                $cacheHit = $false
+                if ($useCache -and $cachePath) {
+                    # Simple cache check using file hash
+                    $fileInfo = Get-Item -Path $filePath
+                    $hashInput = "$filePath|$($fileInfo.Length)|$($fileInfo.LastWriteTimeUtc.Ticks)"
+                    $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                        [System.Text.Encoding]::UTF8.GetBytes($hashInput)
+                    )
+                    $fileHash = [System.BitConverter]::ToString($hash).Replace('-', '')
+                    $cacheKey = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("$filePath|$fileHash"))
+                    $cacheFile = Join-Path $cachePath "$cacheKey.json"
+                    
+                    if (Test-Path $cacheFile) {
+                        try {
+                            $cached = Get-Content -Path $cacheFile -Raw | ConvertFrom-Json
+                            $timestamp = [datetime]::Parse($cached.Timestamp)
+                            $age = ((Get-Date).ToUniversalTime() - $timestamp).TotalSeconds
+                            
+                            if ($age -lt 86400) { # 24 hours
+                                return @{
+                                    Success = $true
+                                    Result = $cached.Result
+                                    Duration = 0
+                                    CacheHit = $true
+                                }
+                            }
+                        } catch {
+                            # Cache read failed, continue with analysis
+                        }
+                    }
+                }
+                
+                # Perform analysis
+                $result = $analyzer.AnalyzeScript($filePath)
+                $duration = ((Get-Date) - $startTime).TotalMilliseconds
+                
+                # Cache the result if enabled
+                if ($useCache -and $cachePath -and $result) {
+                    try {
+                        $fileInfo = Get-Item -Path $filePath
+                        $hashInput = "$filePath|$($fileInfo.Length)|$($fileInfo.LastWriteTimeUtc.Ticks)"
+                        $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash(
+                            [System.Text.Encoding]::UTF8.GetBytes($hashInput)
+                        )
+                        $fileHash = [System.BitConverter]::ToString($hash).Replace('-', '')
+                        $cacheKey = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("$filePath|$fileHash"))
+                        $cacheFile = Join-Path $cachePath "$cacheKey.json"
+                        
+                        $cacheEntry = @{
+                            FilePath = $filePath
+                            FileHash = $fileHash
+                            Timestamp = (Get-Date).ToUniversalTime().ToString('o')
+                            Result = $result
+                        }
+                        
+                        # Ensure cache directory exists
+                        if (-not (Test-Path $cachePath)) {
+                            New-Item -Path $cachePath -ItemType Directory -Force | Out-Null
+                        }
+                        
+                        $cacheEntry | ConvertTo-Json -Depth 10 | Out-File -FilePath $cacheFile -Encoding UTF8
+                    } catch {
+                        # Cache write failed, but analysis succeeded
+                    }
+                }
+                
+                return @{
+                    Success = $true
+                    Result = $result
+                    Duration = $duration
+                    CacheHit = $false
+                }
+            } catch {
+                return @{
+                    Success = $false
+                    Error = $_.Exception.Message
+                    FilePath = $filePath
+                }
+            }
+        }
+
+        # Process results
+        $processedResults = @()
+        $completed = 0
+        
+        foreach ($jobResult in $allResults) {
+            $completed++
+            Write-Progress -Activity "Analyzing PowerShell Files (Parallel)" -Status "Processing results" -PercentComplete (($completed / $allResults.Count) * 100)
+            
+            if ($jobResult.Success) {
+                $processedResults += $jobResult.Result
+                
+                if ($Metrics) {
+                    if ($jobResult.CacheHit) {
+                        $Metrics.RecordCacheHit()
+                    } else {
+                        $Metrics.RecordCacheMiss()
+                    }
+                    $Metrics.RecordFileAnalysis($jobResult.Result.FilePath, $jobResult.Duration, $jobResult.Result.Violations.Count)
+                    $Metrics.RulesExecuted += $jobResult.Result.RulesExecuted
+                }
+            } else {
+                Write-Warning "Parallel analysis failed for $($jobResult.FilePath): $($jobResult.Error)"
+            }
+        }
+        
+        return $processedResults
     }
 
     [hashtable] GenerateSummary([array]$Results) {
@@ -5217,17 +5516,73 @@ function Invoke-WorkspaceAnalysis {
         Path to the workspace directory
     .PARAMETER EnableSuppressions
         Enable suppression comment parsing
+    .PARAMETER IncrementalMode
+        Only analyze files that have changed (Git-aware)
+    .PARAMETER EnableCache
+        Enable caching of analysis results
+    .PARAMETER CacheDir
+        Directory for cache storage (default: .powershield-cache)
+    .PARAMETER TrackMetrics
+        Track and report performance metrics
     #>
     param(
         [Parameter(Mandatory)]
         [string]$WorkspacePath,
         
         [Parameter(Mandatory=$false)]
-        [switch]$EnableSuppressions
+        [switch]$EnableSuppressions,
+        
+        [Parameter(Mandatory=$false)]
+        [switch]$IncrementalMode,
+        
+        [Parameter(Mandatory=$false)]
+        [switch]$EnableCache,
+        
+        [Parameter(Mandatory=$false)]
+        [string]$CacheDir = '.powershield-cache',
+        
+        [Parameter(Mandatory=$false)]
+        [switch]$TrackMetrics
     )
     
     $analyzer = New-SecurityAnalyzer -WorkspacePath $WorkspacePath -EnableSuppressions:$EnableSuppressions
-    return $analyzer.AnalyzeWorkspace($WorkspacePath)
+    
+    # Initialize cache if requested
+    $cache = $null
+    if ($EnableCache) {
+        try {
+            $metricsPath = Join-Path $PSScriptRoot 'PerformanceMetrics.psm1'
+            if (Test-Path $metricsPath) {
+                Import-Module $metricsPath -Force -ErrorAction Stop
+                $fullCacheDir = if ([System.IO.Path]::IsPathRooted($CacheDir)) {
+                    $CacheDir
+                } else {
+                    Join-Path $WorkspacePath $CacheDir
+                }
+                $cache = New-AnalysisCache -Enabled $true -CacheDir $fullCacheDir
+                Write-Verbose "Cache enabled at: $fullCacheDir"
+            }
+        } catch {
+            Write-Warning "Failed to initialize cache: $_"
+        }
+    }
+    
+    # Initialize metrics tracking if requested
+    $metrics = $null
+    if ($TrackMetrics) {
+        try {
+            $metricsPath = Join-Path $PSScriptRoot 'PerformanceMetrics.psm1'
+            if (Test-Path $metricsPath) {
+                Import-Module $metricsPath -Force -ErrorAction Stop
+                $metrics = New-PerformanceMetrics
+                Write-Verbose "Performance metrics tracking enabled"
+            }
+        } catch {
+            Write-Warning "Failed to initialize metrics tracking: $_"
+        }
+    }
+    
+    return $analyzer.AnalyzeWorkspace($WorkspacePath, $IncrementalMode, $cache, $metrics)
 }
 
 # Export module members
