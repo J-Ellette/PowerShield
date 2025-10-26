@@ -45,6 +45,11 @@
         "category": "PowerShield"
       },
       {
+        "command": "powershield.applyTemplateFix",
+        "title": "Apply Template Fix",
+        "category": "PowerShield"
+      },
+      {
         "command": "powershield.explainViolation",
         "title": "Explain Security Issue",
         "category": "PowerShield"
