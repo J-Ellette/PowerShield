@@ -26,6 +26,10 @@ export class RealTimeAnalysisProvider {
     private useBackgroundAnalysis: boolean = true;
     private useIncrementalAnalysis: boolean = true;
     private documentChangeEvents: Map<string, vscode.TextDocumentContentChangeEvent[]> = new Map();
+    
+    // Event emitter for violation updates
+    private _onViolationsUpdated = new vscode.EventEmitter<{ uri: string; violations: SecurityViolation[] }>();
+    public readonly onDidUpdateViolations = this._onViolationsUpdated.event;
 
     constructor(
         engine: PowerShieldEngine,
@@ -241,6 +245,21 @@ export class RealTimeAnalysisProvider {
         
         // Update hover provider with violations
         this.hoverProvider.updateViolations(document, violations);
+        
+        // Fire event for CodeLens and other listeners
+        this._onViolationsUpdated.fire({
+            uri: document.uri.toString(),
+            violations
+        });
+    }
+
+    /**
+     * Register a callback for violation updates
+     */
+    public onViolationsUpdated(callback: (uri: string, violations: SecurityViolation[]) => void): vscode.Disposable {
+        return this.onDidUpdateViolations((event) => {
+            callback(event.uri, event.violations);
+        });
     }
 
     /**
@@ -270,5 +289,8 @@ export class RealTimeAnalysisProvider {
         this.incrementalAnalyzer.clearAllCaches();
         this.backgroundAnalyzer.dispose();
         this.documentChangeEvents.clear();
+        
+        // Dispose event emitter
+        this._onViolationsUpdated.dispose();
     }
 }

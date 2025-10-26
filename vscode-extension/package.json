@@ -84,6 +84,21 @@
         "title": "Refresh Security Overview",
         "category": "PowerShield",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "powershield.showScopeViolations",
+        "title": "Show Scope Violations",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.applyAllScopeFixes",
+        "title": "Apply All Scope Fixes",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.showDocumentSummary",
+        "title": "Show Document Security Summary",
+        "category": "PowerShield"
       }
     ],
     "views": {

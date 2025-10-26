@@ -10,6 +10,9 @@ import { RealTimeAnalysisProvider } from './providers/RealTimeAnalysisProvider';
 import { AICodeActionProvider } from './providers/CodeActionProvider';
 import { SecurityHoverProvider } from './providers/HoverProvider';
 import { SecurityTreeProvider } from './providers/TreeProvider';
+import { SecurityCodeLensProvider } from './providers/CodeLensProvider';
+import { SecurityDashboard } from './webview/SecurityDashboard';
+import { SettingsPanel } from './webview/SettingsPanel';
 
 let powerShieldEngine: PowerShieldEngine;
 let securityProvider: PSSecurityProvider;
@@ -18,6 +21,9 @@ let codeActionProvider: AICodeActionProvider;
 let diagnosticCollection: vscode.DiagnosticCollection;
 let hoverProvider: SecurityHoverProvider;
 let treeProvider: SecurityTreeProvider;
+let codeLensProvider: SecurityCodeLensProvider;
+let securityDashboard: SecurityDashboard;
+let settingsPanel: SettingsPanel;
 
 /**
  * Activate the extension
@@ -43,11 +49,17 @@ export async function activate(context: vscode.ExtensionContext) {
         // Register tree view provider
         registerTreeViewProvider(context);
         
+        // Register CodeLens provider
+        registerCodeLensProvider(context);
+        
         // Setup real-time analysis
         setupRealTimeAnalysis(context, powerShieldEngine);
         
         // Register AI code actions
         registerCodeActions(context);
+        
+        // Initialize webviews
+        initializeWebviews(context);
         
         // Register commands
         registerCommands(context, powerShieldEngine);
@@ -114,6 +126,36 @@ function registerTreeViewProvider(context: vscode.ExtensionContext): void {
 }
 
 /**
+ * Register CodeLens provider
+ */
+function registerCodeLensProvider(context: vscode.ExtensionContext): void {
+    // Initialize CodeLens provider
+    codeLensProvider = new SecurityCodeLensProvider(securityProvider);
+    
+    // Register for PowerShell files
+    const codeLensDisposable = vscode.languages.registerCodeLensProvider(
+        { language: 'powershell', scheme: 'file' },
+        codeLensProvider
+    );
+    
+    context.subscriptions.push(codeLensDisposable);
+    console.log('CodeLens provider registered');
+}
+
+/**
+ * Initialize webview panels
+ */
+function initializeWebviews(context: vscode.ExtensionContext): void {
+    // Initialize dashboard
+    securityDashboard = new SecurityDashboard(context, securityProvider);
+    
+    // Initialize settings panel
+    settingsPanel = new SettingsPanel(context);
+    
+    console.log('Webviews initialized');
+}
+
+/**
  * Setup real-time analysis
  */
 function setupRealTimeAnalysis(
@@ -130,6 +172,13 @@ function setupRealTimeAnalysis(
 
     // Setup document watchers
     realTimeAnalysisProvider.setupDocumentWatchers(context);
+
+    // Hook up CodeLens updates when violations change
+    realTimeAnalysisProvider.onViolationsUpdated((documentUri, violations) => {
+        if (codeLensProvider) {
+            codeLensProvider.updateViolations(documentUri, violations);
+        }
+    });
 
     // Analyze all currently open PowerShell documents
     realTimeAnalysisProvider.analyzeAllOpenDocuments().catch(err => {
@@ -262,11 +311,8 @@ function registerCommands(
     // Configure settings
     const configureSettingsCommand = vscode.commands.registerCommand(
         'powershield.configureSettings',
-        () => {
-            vscode.commands.executeCommand(
-                'workbench.action.openSettings',
-                'powershield'
-            );
+        async () => {
+            await settingsPanel.show();
         }
     );
 
@@ -337,10 +383,8 @@ function registerCommands(
 
     const showDashboardCommand = vscode.commands.registerCommand(
         'powershield.showSecurityDashboard',
-        () => {
-            vscode.window.showInformationMessage(
-                'Security Dashboard coming in Phase 2.5'
-            );
+        async () => {
+            await securityDashboard.show();
         }
     );
 
@@ -406,6 +450,66 @@ function registerCommands(
         }
     );
 
+    // Phase 2.5 Commands: CodeLens integration
+    const showScopeViolationsCommand = vscode.commands.registerCommand(
+        'powershield.showScopeViolations',
+        async (documentUri: vscode.Uri, scope: any, violations: any[]) => {
+            const message = `${scope.name} has ${violations.length} security issue(s):\n` +
+                violations.map((v, i) => `${i + 1}. ${v.name} (${v.severity})`).join('\n');
+            
+            const action = await vscode.window.showInformationMessage(
+                message,
+                'Show Details',
+                'Jump to First'
+            );
+            
+            if (action === 'Jump to First' && violations.length > 0) {
+                await vscode.commands.executeCommand('powershield.jumpToViolation', violations[0]);
+            } else if (action === 'Show Details') {
+                await securityDashboard.show();
+            }
+        }
+    );
+
+    const applyAllScopeFixesCommand = vscode.commands.registerCommand(
+        'powershield.applyAllScopeFixes',
+        async (documentUri: vscode.Uri, scope: any, violations: any[]) => {
+            const confirm = await vscode.window.showWarningMessage(
+                `Apply fixes for ${violations.length} issue(s) in ${scope.name}?`,
+                { modal: true },
+                'Apply Fixes'
+            );
+            
+            if (confirm === 'Apply Fixes') {
+                const document = await vscode.workspace.openTextDocument(documentUri);
+                
+                for (const violation of violations) {
+                    const line = violation.lineNumber - 1;
+                    const range = new vscode.Range(
+                        new vscode.Position(line, 0),
+                        new vscode.Position(line, document.lineAt(line).text.length)
+                    );
+                    
+                    await vscode.commands.executeCommand(
+                        'powershield.generateAIFix',
+                        document,
+                        violation,
+                        range
+                    );
+                }
+                
+                vscode.window.showInformationMessage('Applied fixes successfully');
+            }
+        }
+    );
+
+    const showDocumentSummaryCommand = vscode.commands.registerCommand(
+        'powershield.showDocumentSummary',
+        async (documentUri: vscode.Uri, violations: any[]) => {
+            await securityDashboard.show();
+        }
+    );
+
     // Register all commands
     context.subscriptions.push(
         analyzeFileCommand,
@@ -421,7 +525,10 @@ function registerCommands(
         showDashboardCommand,
         openDocumentationCommand,
         jumpToViolationCommand,
-        refreshSecurityTreeCommand
+        refreshSecurityTreeCommand,
+        showScopeViolationsCommand,
+        applyAllScopeFixesCommand,
+        showDocumentSummaryCommand
     );
 
     console.log('Commands registered');
