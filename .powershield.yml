@@ -1,19 +1,16 @@
 # PowerShield Configuration
 version: "1.0"
 
-# Analysis Settings
 analysis:
   severity_threshold: "Medium"
-  max_file_size: 10485760  # 10MB
+  max_file_size: 10485760
   timeout_seconds: 30
-  parallel_analysis: false  # Disable to avoid the "Using variable" errors
-  
-  # Path exclusions (glob patterns) - must be a proper YAML array
+  parallel_analysis: false
   exclude_paths:
     - "tests"
     - "tests/**"
     - "**/tests/**"
-    - "**/TestScripts/**" 
+    - "**/TestScripts/**"
     - "**/*.Tests.ps1"
     - "**/*.tests.ps1"
     - "**/node_modules/**"
@@ -22,57 +19,43 @@ analysis:
     - ".github/**"
     - "rules/community/**"
 
-# Rule Configuration
 rules:
-  # Core security rules with suppressions for false positives
   InsecureHashAlgorithms:
     enabled: true
     severity: "High"
-  
   CredentialExposure:
     enabled: true
     severity: "Critical"
-  
   CommandInjection:
     enabled: true
     severity: "Critical"
-  
   CertificateValidation:
     enabled: true
     severity: "High"
-    
-  # Reduce false positives from legitimate dynamic imports
   UnsafeFileInclusion:
     enabled: true
-    severity: "Medium"  # Reduce from High to Medium for controlled includes
-  
+    severity: "Medium"
   DangerousModules:
     enabled: true
-    severity: "Medium"  # Reduce from High to Medium for controlled imports
+    severity: "Medium"
 
-# Auto-Fix Configuration
 autofix:
   enabled: true
   provider: "github-models"
   model: "gpt-4o-mini"
   confidence_threshold: 0.8
-  
-  # Rule-specific fix settings
   rule_fixes:
     InsecureHashAlgorithms: true
     CredentialExposure: true
-    CommandInjection: false  # Too risky to auto-fix
-    CertificateValidation: false  # Requires manual review
+    CommandInjection: false
+    CertificateValidation: false
 
-# CI/CD Integration
 ci:
   fail_on: ["Critical", "High"]
   generate_sarif: true
   upload_artifacts: true
-  # Force clean analysis to avoid fingerprint conflicts
   clean_analysis: true
 
-# Hooks Configuration
 hooks:
   enabled: true
   block_on: ["Critical", "High"]

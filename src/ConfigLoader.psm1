@@ -137,7 +137,20 @@ class PowerShieldConfiguration {
         }
     }
 
-    [hashtable] MergeHashtables([hashtable]$target, [hashtable]$source) {
+    [hashtable] MergeHashtables([hashtable]$target, $source) {
+        if ($null -eq $source) {
+            return $target.Clone()
+        }
+        
+        if ($source -is [string] -and [string]::IsNullOrEmpty($source)) {
+            return $target.Clone()
+        }
+        
+        if ($source -isnot [hashtable]) {
+            Write-Warning "MergeHashtables: source parameter is not a hashtable, type: $($source.GetType().Name), value: '$source'"
+            return $target.Clone()
+        }
+        
         $result = $target.Clone()
         foreach ($key in $source.Keys) {
             if ($result.ContainsKey($key) -and $result[$key] -is [hashtable] -and $source[$key] -is [hashtable]) {
