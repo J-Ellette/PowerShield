@@ -7,10 +7,12 @@ import * as vscode from 'vscode';
 import { PowerShieldEngine } from './core/PowerShieldEngine';
 import { PSSecurityProvider } from './providers/SecurityProvider';
 import { RealTimeAnalysisProvider } from './providers/RealTimeAnalysisProvider';
+import { AICodeActionProvider } from './providers/CodeActionProvider';
 
 let powerShieldEngine: PowerShieldEngine;
 let securityProvider: PSSecurityProvider;
 let realTimeAnalysisProvider: RealTimeAnalysisProvider;
+let codeActionProvider: AICodeActionProvider;
 let diagnosticCollection: vscode.DiagnosticCollection;
 
 /**
@@ -33,6 +35,9 @@ export async function activate(context: vscode.ExtensionContext) {
         
         // Setup real-time analysis
         setupRealTimeAnalysis(context, powerShieldEngine);
+        
+        // Register AI code actions
+        registerCodeActions(context);
         
         // Register commands
         registerCommands(context, powerShieldEngine);
@@ -87,6 +92,29 @@ function setupRealTimeAnalysis(
     });
 
     console.log('Real-time analysis setup complete');
+}
+
+/**
+ * Register AI code actions
+ */
+function registerCodeActions(context: vscode.ExtensionContext): void {
+    // Initialize code action provider
+    codeActionProvider = new AICodeActionProvider();
+    
+    // Register for PowerShell files
+    const codeActionDisposable = vscode.languages.registerCodeActionsProvider(
+        { language: 'powershell', scheme: 'file' },
+        codeActionProvider,
+        {
+            providedCodeActionKinds: [
+                vscode.CodeActionKind.QuickFix,
+                vscode.CodeActionKind.Empty
+            ]
+        }
+    );
+    
+    context.subscriptions.push(codeActionDisposable);
+    console.log('AI code actions registered');
 }
 
 /**
@@ -214,28 +242,45 @@ function registerCommands(
     // Placeholder commands for Phase 2.2+
     const generateAIFixCommand = vscode.commands.registerCommand(
         'powershield.generateAIFix',
-        () => {
-            vscode.window.showInformationMessage(
-                'AI Fix generation coming in Phase 2.2'
-            );
+        async (document: vscode.TextDocument, violation: any, range: vscode.Range) => {
+            if (codeActionProvider) {
+                await codeActionProvider.generateAIFix(document, violation, range);
+            } else {
+                vscode.window.showWarningMessage('Code action provider not initialized');
+            }
         }
     );
 
     const explainViolationCommand = vscode.commands.registerCommand(
         'powershield.explainViolation',
-        () => {
-            vscode.window.showInformationMessage(
-                'Violation explanations coming in Phase 2.3'
-            );
+        async (violation: any) => {
+            if (codeActionProvider) {
+                await codeActionProvider.explainViolation(violation);
+            } else {
+                vscode.window.showWarningMessage('Code action provider not initialized');
+            }
         }
     );
 
     const suppressViolationCommand = vscode.commands.registerCommand(
         'powershield.suppressViolation',
-        () => {
-            vscode.window.showInformationMessage(
-                'Violation suppression coming in Phase 2.3'
-            );
+        async (document: vscode.TextDocument, violation: any, range: vscode.Range) => {
+            if (codeActionProvider) {
+                await codeActionProvider.suppressViolation(document, violation, range);
+            } else {
+                vscode.window.showWarningMessage('Code action provider not initialized');
+            }
+        }
+    );
+    
+    const applyTemplateFixCommand = vscode.commands.registerCommand(
+        'powershield.applyTemplateFix',
+        async (document: vscode.TextDocument, violation: any, range: vscode.Range) => {
+            if (codeActionProvider) {
+                await codeActionProvider.applyTemplateFix(document, violation, range);
+            } else {
+                vscode.window.showWarningMessage('Code action provider not initialized');
+            }
         }
     );
 
@@ -259,6 +304,7 @@ function registerCommands(
         generateAIFixCommand,
         explainViolationCommand,
         suppressViolationCommand,
+        applyTemplateFixCommand,
         showDashboardCommand
     );
 

@@ -188,10 +188,12 @@ export interface FixContext {
         targetCode: string;
         afterLines: string[];
         functionContext?: FunctionContext;
+        moduleContext?: string;
     };
     projectContext?: {
         workspaceType?: string;
         dependencies?: string[];
+        conventions?: string;
     };
 }
 

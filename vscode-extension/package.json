@@ -2,7 +2,7 @@
   "name": "powershield",
   "displayName": "PowerShield Security Analyzer",
   "description": "Real-time PowerShell security analysis with AI-powered fixes",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "publisher": "powershield",
   "icon": "images/icon.png",
   "engines": {
@@ -42,6 +42,11 @@
       {
         "command": "powershield.generateAIFix",
         "title": "Generate AI Fix",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.applyTemplateFix",
+        "title": "Apply Template Fix",
         "category": "PowerShield"
       },
       {
