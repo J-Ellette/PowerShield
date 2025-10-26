@@ -1,0 +1,297 @@
+# Complete CircleCI Configuration Example with PowerShield
+
+version: 2.1
+
+# Define the PowerShield orb (when published)
+orbs:
+  powershield: powershield/powershield@1.0.0
+
+# Reusable executors
+executors:
+  powershell:
+    docker:
+      - image: mcr.microsoft.com/powershell:7.4-alpine-3.20
+    working_directory: ~/project
+
+# Reusable commands
+commands:
+  setup-powershield:
+    description: "Install PowerShield"
+    steps:
+      - run:
+          name: Install Dependencies
+          command: |
+            apk add --no-cache git curl
+      - run:
+          name: Clone PowerShield
+          command: |
+            if [ -d "/tmp/powershield" ]; then
+              rm -rf /tmp/powershield
+            fi
+            git clone --depth 1 https://github.com/J-Ellette/PowerShield.git /tmp/powershield
+            echo "PowerShield installed successfully"
+  
+  run-security-analysis:
+    description: "Run PowerShield security analysis"
+    parameters:
+      severity-threshold:
+        type: enum
+        enum: ["Low", "Medium", "High", "Critical"]
+        default: "Medium"
+      fail-on-critical:
+        type: boolean
+        default: true
+    steps:
+      - run:
+          name: Run PowerShield Analysis
+          command: |
+            mkdir -p test-results .powershield-reports
+            pwsh -Command "
+              # Import modules
+              Import-Module /tmp/powershield/src/PowerShellSecurityAnalyzer.psm1 -Force
+              Import-Module /tmp/powershield/src/CIAdapter.psm1 -Force
+              
+              Write-Host 'Starting PowerShield security analysis...'
+              Write-Host 'Workspace: ~/project'
+              Write-Host 'Severity Threshold: << parameters.severity-threshold >>'
+              
+              # Detect CI context
+              \$ciAdapter = New-CIAdapter
+              \$context = \$ciAdapter.GetContext()
+              Write-Host 'CI Environment: ' \$context.Provider
+              Write-Host 'Repository: ' \$context.Repository
+              Write-Host 'Branch: ' \$context.Branch
+              
+              # Run analysis
+              \$result = Invoke-WorkspaceAnalysis -WorkspacePath '~/project' -EnableSuppressions
+              
+              if (\$null -eq \$result -or \$null -eq \$result.Results) {
+                  Write-Warning 'Analysis returned no results'
+                  exit 0
+              }
+              
+              Write-Host 'Files analyzed: ' \$result.FilesAnalyzed
+              Write-Host 'Total violations: ' \$result.TotalViolations
+              
+              # Collect all violations
+              \$allViolations = @()
+              foreach (\$fileResult in \$result.Results) {
+                  if (\$fileResult.Violations) {
+                      \$allViolations += \$fileResult.Violations
+                  }
+              }
+              
+              # Filter by severity threshold
+              \$severityMap = @{ 'Low' = 1; 'Medium' = 2; 'High' = 3; 'Critical' = 4 }
+              \$thresholdValue = \$severityMap['<< parameters.severity-threshold >>']
+              \$filteredViolations = \$allViolations | Where-Object {
+                  \$sevVal = \$severityMap[\$_.Severity.ToString()]
+                  \$sevVal -ge \$thresholdValue
+              }
+              
+              # Count by severity
+              \$criticalCount = (\$filteredViolations | Where-Object { \$_.Severity -eq 'Critical' }).Count
+              \$highCount = (\$filteredViolations | Where-Object { \$_.Severity -eq 'High' }).Count
+              \$mediumCount = (\$filteredViolations | Where-Object { \$_.Severity -eq 'Medium' }).Count
+              \$lowCount = (\$filteredViolations | Where-Object { \$_.Severity -eq 'Low' }).Count
+              
+              Write-Host 'Critical: ' \$criticalCount
+              Write-Host 'High: ' \$highCount
+              Write-Host 'Medium: ' \$mediumCount
+              Write-Host 'Low: ' \$lowCount
+              
+              # Export results
+              \$exportData = @{
+                  metadata = @{
+                      version = '1.0.0'
+                      timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+                      ci = @{
+                          provider = \$context.Provider
+                          repository = \$context.Repository
+                          branch = \$context.Branch
+                          sha = \$context.CommitSha
+                          buildId = \$context.BuildId
+                          jobUrl = \$context.JobUrl
+                      }
+                  }
+                  summary = @{
+                      TotalCritical = \$criticalCount
+                      TotalHigh = \$highCount
+                      TotalMedium = \$mediumCount
+                      TotalLow = \$lowCount
+                      FilesAnalyzed = \$result.FilesAnalyzed
+                  }
+                  violations = \$filteredViolations
+              }
+              
+              # Save JSON
+              \$exportData | ConvertTo-Json -Depth 10 | Out-File '.powershield-reports/analysis.json' -Encoding UTF8
+              
+              # Generate SARIF
+              . /tmp/powershield/scripts/Convert-ToSARIF.ps1
+              Convert-ToSARIF -InputFile '.powershield-reports/analysis.json' -OutputFile '.powershield-reports/analysis.sarif'
+              
+              # Generate JUnit XML for CircleCI
+              \$junit = @'
+<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<testsuites name=\"PowerShield Security Analysis\" tests=\"{0}\" failures=\"{1}\">
+  <testsuite name=\"SecurityRules\" tests=\"{0}\" failures=\"{1}\">
+'@ -f \$filteredViolations.Count, (\$criticalCount + \$highCount)
+              
+              foreach (\$violation in \$filteredViolations) {
+                  \$className = \$violation.RuleId
+                  \$testName = \"\$(\$violation.FilePath):\$(\$violation.LineNumber)\"
+                  \$message = \$violation.Message -replace '<', '&lt;' -replace '>', '&gt;' -replace '&', '&amp;'
+                  
+                  if (\$violation.Severity -in @('Critical', 'High')) {
+                      \$junit += @\"
+    <testcase classname=\"\$className\" name=\"\$testName\">
+      <failure message=\"\$message\" type=\"\$(\$violation.Severity)\"/>
+    </testcase>
+\"@
+                  } else {
+                      \$junit += @\"
+    <testcase classname=\"\$className\" name=\"\$testName\"/>
+\"@
+                  }
+              }
+              \$junit += @'
+  </testsuite>
+</testsuites>
+'@
+              \$junit | Out-File 'test-results/junit.xml' -Encoding UTF8
+              
+              # Generate Markdown report
+              . /tmp/powershield/scripts/Generate-SecurityReport.ps1
+              Generate-SecurityReport -InputFile '.powershield-reports/analysis.json' -OutputFile '.powershield-reports/security-report.md'
+              
+              # Write summary
+              Write-Host '==== PowerShield Analysis Summary ===='
+              Write-Host \"Total Violations: \$(\$filteredViolations.Count)\"
+              Write-Host \"Critical: \$criticalCount\"
+              Write-Host \"High: \$highCount\"
+              Write-Host \"Medium: \$mediumCount\"
+              Write-Host \"Low: \$lowCount\"
+              
+              # Fail if critical issues found and flag is set
+              if (\$criticalCount -gt 0 -and '<< parameters.fail-on-critical >>' -eq 'True') {
+                  Write-Error \"Found \$criticalCount critical security violations\"
+                  exit 1
+              }
+              
+              Write-Host 'Security analysis complete'
+            "
+      - store_test_results:
+          path: test-results
+      - store_artifacts:
+          path: .powershield-reports
+          destination: security-reports
+
+# Jobs definition
+jobs:
+  powershield-security:
+    executor: powershell
+    parameters:
+      severity-threshold:
+        type: enum
+        enum: ["Low", "Medium", "High", "Critical"]
+        default: "Medium"
+      fail-on-critical:
+        type: boolean
+        default: true
+    steps:
+      - checkout
+      - setup-powershield
+      - run-security-analysis:
+          severity-threshold: << parameters.severity-threshold >>
+          fail-on-critical: << parameters.fail-on-critical >>
+  
+  post-pr-comment:
+    docker:
+      - image: circleci/node:latest
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Post PR Comment
+          command: |
+            if [ -z "$CIRCLE_PULL_REQUEST" ]; then
+              echo "Not a pull request, skipping comment"
+              exit 0
+            fi
+            
+            # Extract PR number from URL
+            PR_NUMBER=$(echo $CIRCLE_PULL_REQUEST | grep -oE '[0-9]+$')
+            
+            # Read report
+            REPORT=$(cat .powershield-reports/security-report.md)
+            
+            # Post comment (example for GitHub)
+            curl -X POST \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"body\": \"## 🛡️ PowerShield Security Analysis\\n\\n${REPORT}\"}" \
+              "https://api.github.com/repos/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/issues/$PR_NUMBER/comments"
+
+# Workflows
+workflows:
+  version: 2
+  
+  # Main security workflow
+  security-pipeline:
+    jobs:
+      - powershield-security:
+          name: security-scan-medium
+          severity-threshold: "Medium"
+          fail-on-critical: true
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              ignore: /.*/
+      
+      - powershield-security:
+          name: security-scan-high
+          severity-threshold: "High"
+          fail-on-critical: true
+          filters:
+            branches:
+              only:
+                - main
+                - develop
+  
+  # PR workflow
+  pr-security:
+    jobs:
+      - powershield-security:
+          name: pr-security-check
+          severity-threshold: "High"
+          fail-on-critical: false
+          filters:
+            branches:
+              ignore:
+                - main
+                - develop
+      
+      - post-pr-comment:
+          requires:
+            - pr-security-check
+          filters:
+            branches:
+              ignore:
+                - main
+                - develop
+  
+  # Scheduled audit
+  weekly-audit:
+    triggers:
+      - schedule:
+          cron: "0 0 * * 0"  # Every Sunday at midnight
+          filters:
+            branches:
+              only: main
+    jobs:
+      - powershield-security:
+          name: weekly-security-audit
+          severity-threshold: "Low"
+          fail-on-critical: false

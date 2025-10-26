@@ -1,0 +1,230 @@
+# Complete GitLab CI Pipeline Example with PowerShield
+# This example demonstrates a full security analysis workflow
+
+variables:
+  POWERSHIELD_VERSION: '1.0.0'
+  SEVERITY_THRESHOLD: 'High'
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH =~ /^(develop|feature\/.*)$/
+
+stages:
+  - security
+  - test
+  - report
+
+# Security analysis job
+powershield:security:
+  stage: security
+  image: mcr.microsoft.com/powershell:7.4-alpine-3.20
+  before_script:
+    - |
+      echo "Setting up PowerShield..."
+      apk add --no-cache git
+      git clone --depth 1 https://github.com/J-Ellette/PowerShield.git /tmp/powershield
+      echo "PowerShield setup complete"
+  script:
+    - |
+      pwsh -Command "
+        # Import modules
+        Import-Module /tmp/powershield/src/PowerShellSecurityAnalyzer.psm1 -Force
+        Import-Module /tmp/powershield/src/CIAdapter.psm1 -Force
+        
+        Write-Host 'Starting PowerShield security analysis...'
+        Write-Host 'Workspace: $CI_PROJECT_DIR'
+        Write-Host 'Severity Threshold: $env:SEVERITY_THRESHOLD'
+        
+        # Detect CI context
+        \$ciAdapter = New-CIAdapter
+        \$context = \$ciAdapter.GetContext()
+        Write-Host 'CI Environment: ' \$context.Provider
+        Write-Host 'Repository: ' \$context.Repository
+        Write-Host 'Branch: ' \$context.Branch
+        
+        # Run analysis
+        \$result = Invoke-WorkspaceAnalysis -WorkspacePath '$CI_PROJECT_DIR' -EnableSuppressions
+        
+        if (\$null -eq \$result -or \$null -eq \$result.Results) {
+            Write-Warning 'Analysis returned no results'
+            exit 0
+        }
+        
+        Write-Host 'Files analyzed: ' \$result.FilesAnalyzed
+        Write-Host 'Total violations: ' \$result.TotalViolations
+        
+        # Collect all violations
+        \$allViolations = @()
+        foreach (\$fileResult in \$result.Results) {
+            if (\$fileResult.Violations) {
+                \$allViolations += \$fileResult.Violations
+            }
+        }
+        
+        # Filter by severity threshold
+        \$severityMap = @{ 'Low' = 1; 'Medium' = 2; 'High' = 3; 'Critical' = 4 }
+        \$thresholdValue = \$severityMap['$env:SEVERITY_THRESHOLD']
+        \$filteredViolations = \$allViolations | Where-Object {
+            \$sevVal = \$severityMap[\$_.Severity.ToString()]
+            \$sevVal -ge \$thresholdValue
+        }
+        
+        # Count by severity
+        \$criticalCount = (\$filteredViolations | Where-Object { \$_.Severity -eq 'Critical' }).Count
+        \$highCount = (\$filteredViolations | Where-Object { \$_.Severity -eq 'High' }).Count
+        \$mediumCount = (\$filteredViolations | Where-Object { \$_.Severity -eq 'Medium' }).Count
+        \$lowCount = (\$filteredViolations | Where-Object { \$_.Severity -eq 'Low' }).Count
+        
+        Write-Host 'Critical: ' \$criticalCount
+        Write-Host 'High: ' \$highCount
+        Write-Host 'Medium: ' \$mediumCount
+        Write-Host 'Low: ' \$lowCount
+        
+        # Export results
+        \$exportData = @{
+            metadata = @{
+                version = '$env:POWERSHIELD_VERSION'
+                timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+                ci = @{
+                    provider = \$context.Provider
+                    repository = \$context.Repository
+                    branch = \$context.Branch
+                    sha = \$context.CommitSha
+                    mrId = '$CI_MERGE_REQUEST_IID'
+                    jobUrl = \$context.JobUrl
+                }
+            }
+            summary = @{
+                TotalCritical = \$criticalCount
+                TotalHigh = \$highCount
+                TotalMedium = \$mediumCount
+                TotalLow = \$lowCount
+                FilesAnalyzed = \$result.FilesAnalyzed
+            }
+            violations = \$filteredViolations
+        }
+        
+        # Create reports directory
+        New-Item -ItemType Directory -Force -Path '.powershield-reports' | Out-Null
+        
+        # Save JSON
+        \$exportData | ConvertTo-Json -Depth 10 | Out-File '.powershield-reports/analysis.json' -Encoding UTF8
+        
+        # Generate SARIF (for GitLab Security Dashboard)
+        . /tmp/powershield/scripts/Convert-ToSARIF.ps1
+        Convert-ToSARIF -InputFile '.powershield-reports/analysis.json' -OutputFile '.powershield-reports/gl-sast-report.json'
+        
+        # Generate JUnit XML (for GitLab Test Reports)
+        \$junit = @'
+<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<testsuites name=\"PowerShield Security Analysis\" tests=\"{0}\" failures=\"{1}\">
+  <testsuite name=\"SecurityRules\" tests=\"{0}\" failures=\"{1}\">
+'@ -f \$filteredViolations.Count, (\$criticalCount + \$highCount)
+        
+        foreach (\$violation in \$filteredViolations) {
+            \$className = \$violation.RuleId
+            \$testName = \"\$(\$violation.FilePath):\$(\$violation.LineNumber)\"
+            \$message = \$violation.Message -replace '<', '&lt;' -replace '>', '&gt;' -replace '&', '&amp;'
+            
+            if (\$violation.Severity -in @('Critical', 'High')) {
+                \$junit += @\"
+    <testcase classname=\"\$className\" name=\"\$testName\">
+      <failure message=\"\$message\" type=\"\$(\$violation.Severity)\"/>
+    </testcase>
+\"@
+            } else {
+                \$junit += @\"
+    <testcase classname=\"\$className\" name=\"\$testName\"/>
+\"@
+            }
+        }
+        \$junit += @'
+  </testsuite>
+</testsuites>
+'@
+        \$junit | Out-File '.powershield-reports/junit-report.xml' -Encoding UTF8
+        
+        # Generate Markdown report
+        . /tmp/powershield/scripts/Generate-SecurityReport.ps1
+        Generate-SecurityReport -InputFile '.powershield-reports/analysis.json' -OutputFile '.powershield-reports/security-report.md'
+        
+        # Write summary for GitLab
+        Write-Host '==== PowerShield Analysis Summary ===='
+        Write-Host \"Total Violations: \$(\$filteredViolations.Count)\"
+        Write-Host \"Critical: \$criticalCount\"
+        Write-Host \"High: \$highCount\"
+        Write-Host \"Medium: \$mediumCount\"
+        Write-Host \"Low: \$lowCount\"
+        
+        # Fail if critical issues found
+        if (\$criticalCount -gt 0) {
+            Write-Error \"Found \$criticalCount critical security violations\"
+            exit 1
+        }
+        
+        Write-Host 'Security analysis complete'
+      "
+  artifacts:
+    reports:
+      junit: .powershield-reports/junit-report.xml
+      sast: .powershield-reports/gl-sast-report.json
+    paths:
+      - .powershield-reports/
+    when: always
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Post results as MR comment
+powershield:mr-comment:
+  stage: report
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    - |
+      if [ -z "$CI_MERGE_REQUEST_IID" ]; then
+        echo "Not a merge request, skipping comment"
+        exit 0
+      fi
+      
+      # Read the security report
+      if [ ! -f .powershield-reports/security-report.md ]; then
+        echo "Security report not found, skipping comment"
+        exit 0
+      fi
+      
+      REPORT=$(cat .powershield-reports/security-report.md)
+      
+      # Build comment JSON
+      COMMENT_BODY=$(jq -n --arg body "## 🛡️ PowerShield Security Analysis Results\n\n$REPORT" '{body: $body}')
+      
+      # Post comment using GitLab API
+      curl --request POST \
+        --header "PRIVATE-TOKEN: $CI_JOB_TOKEN" \
+        --header "Content-Type: application/json" \
+        --data "$COMMENT_BODY" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes"
+      
+      echo "MR comment posted successfully"
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+  needs:
+    - powershield:security
+  allow_failure: true
+
+# Optional: Run on schedule for periodic audits
+powershield:scheduled:
+  stage: security
+  image: mcr.microsoft.com/powershell:7.4-alpine-3.20
+  script:
+    - pwsh /tmp/powershield/psts.ps1 analyze --profile thorough --reports-dir
+  artifacts:
+    paths:
+      - .powershield-reports/
+    expire_in: 90 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"

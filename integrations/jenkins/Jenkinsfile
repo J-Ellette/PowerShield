@@ -1,0 +1,330 @@
+// Complete Jenkins Pipeline Example with PowerShield
+// This example demonstrates a full security analysis workflow
+
+@Library('powershield') _
+
+pipeline {
+    agent any
+    
+    parameters {
+        choice(
+            name: 'SEVERITY_THRESHOLD',
+            choices: ['Low', 'Medium', 'High', 'Critical'],
+            description: 'Minimum severity level to report'
+        )
+        booleanParam(
+            name: 'FAIL_ON_CRITICAL',
+            defaultValue: true,
+            description: 'Fail build on critical security issues'
+        )
+    }
+    
+    environment {
+        POWERSHIELD_VERSION = '1.0.0'
+        POWERSHIELD_REPO = 'https://github.com/J-Ellette/PowerShield.git'
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        
+        stage('Setup PowerShield') {
+            steps {
+                sh '''
+                    echo "Setting up PowerShield..."
+                    if [ -d "/tmp/powershield" ]; then
+                        rm -rf /tmp/powershield
+                    fi
+                    git clone --depth 1 ${POWERSHIELD_REPO} /tmp/powershield
+                    echo "PowerShield setup complete"
+                '''
+            }
+        }
+        
+        stage('Security Analysis') {
+            agent {
+                docker {
+                    image 'mcr.microsoft.com/powershell:7.4-alpine-3.20'
+                    reuseNode true
+                }
+            }
+            steps {
+                script {
+                    sh '''
+                        pwsh -Command "
+                            # Import modules
+                            Import-Module /tmp/powershield/src/PowerShellSecurityAnalyzer.psm1 -Force
+                            Import-Module /tmp/powershield/src/CIAdapter.psm1 -Force
+                            
+                            Write-Host 'Starting PowerShield security analysis...'
+                            Write-Host 'Workspace: $env:WORKSPACE'
+                            Write-Host 'Severity Threshold: $env:SEVERITY_THRESHOLD'
+                            
+                            # Detect CI context
+                            \\$ciAdapter = New-CIAdapter
+                            \\$context = \\$ciAdapter.GetContext()
+                            Write-Host 'CI Environment: ' \\$context.Provider
+                            Write-Host 'Repository: ' \\$context.Repository
+                            Write-Host 'Branch: ' \\$context.Branch
+                            
+                            # Run analysis
+                            \\$result = Invoke-WorkspaceAnalysis -WorkspacePath '$WORKSPACE' -EnableSuppressions
+                            
+                            if (\\$null -eq \\$result -or \\$null -eq \\$result.Results) {
+                                Write-Warning 'Analysis returned no results'
+                                exit 0
+                            }
+                            
+                            Write-Host 'Files analyzed: ' \\$result.FilesAnalyzed
+                            Write-Host 'Total violations: ' \\$result.TotalViolations
+                            
+                            # Collect all violations
+                            \\$allViolations = @()
+                            foreach (\\$fileResult in \\$result.Results) {
+                                if (\\$fileResult.Violations) {
+                                    \\$allViolations += \\$fileResult.Violations
+                                }
+                            }
+                            
+                            # Filter by severity threshold
+                            \\$severityMap = @{ 'Low' = 1; 'Medium' = 2; 'High' = 3; 'Critical' = 4 }
+                            \\$thresholdValue = \\$severityMap['$SEVERITY_THRESHOLD']
+                            \\$filteredViolations = \\$allViolations | Where-Object {
+                                \\$sevVal = \\$severityMap[\\$_.Severity.ToString()]
+                                \\$sevVal -ge \\$thresholdValue
+                            }
+                            
+                            # Count by severity
+                            \\$criticalCount = (\\$filteredViolations | Where-Object { \\$_.Severity -eq 'Critical' }).Count
+                            \\$highCount = (\\$filteredViolations | Where-Object { \\$_.Severity -eq 'High' }).Count
+                            \\$mediumCount = (\\$filteredViolations | Where-Object { \\$_.Severity -eq 'Medium' }).Count
+                            \\$lowCount = (\\$filteredViolations | Where-Object { \\$_.Severity -eq 'Low' }).Count
+                            
+                            Write-Host 'Critical: ' \\$criticalCount
+                            Write-Host 'High: ' \\$highCount
+                            Write-Host 'Medium: ' \\$mediumCount
+                            Write-Host 'Low: ' \\$lowCount
+                            
+                            # Export results
+                            \\$exportData = @{
+                                metadata = @{
+                                    version = '$POWERSHIELD_VERSION'
+                                    timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+                                    ci = @{
+                                        provider = \\$context.Provider
+                                        repository = \\$context.Repository
+                                        branch = \\$context.Branch
+                                        sha = \\$context.CommitSha
+                                        buildId = \\$context.BuildId
+                                        jobUrl = \\$context.JobUrl
+                                    }
+                                }
+                                summary = @{
+                                    TotalCritical = \\$criticalCount
+                                    TotalHigh = \\$highCount
+                                    TotalMedium = \\$mediumCount
+                                    TotalLow = \\$lowCount
+                                    FilesAnalyzed = \\$result.FilesAnalyzed
+                                }
+                                violations = \\$filteredViolations
+                            }
+                            
+                            # Create reports directory
+                            New-Item -ItemType Directory -Force -Path '.powershield-reports' | Out-Null
+                            
+                            # Save JSON
+                            \\$exportData | ConvertTo-Json -Depth 10 | Out-File '.powershield-reports/analysis.json' -Encoding UTF8
+                            
+                            # Generate SARIF
+                            . /tmp/powershield/scripts/Convert-ToSARIF.ps1
+                            Convert-ToSARIF -InputFile '.powershield-reports/analysis.json' -OutputFile '.powershield-reports/analysis.sarif'
+                            
+                            # Generate JUnit XML for Jenkins
+                            \\$junit = @'
+<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<testsuites name=\"PowerShield Security Analysis\" tests=\"{0}\" failures=\"{1}\">
+  <testsuite name=\"SecurityRules\" tests=\"{0}\" failures=\"{1}\">
+'@ -f \\$filteredViolations.Count, (\\$criticalCount + \\$highCount)
+                            
+                            foreach (\\$violation in \\$filteredViolations) {
+                                \\$className = \\$violation.RuleId
+                                \\$testName = \\\"\\$(\\$violation.FilePath):\\$(\\$violation.LineNumber)\\\"
+                                \\$message = \\$violation.Message -replace '<', '&lt;' -replace '>', '&gt;' -replace '&', '&amp;'
+                                
+                                if (\\$violation.Severity -in @('Critical', 'High')) {
+                                    \\$junit += @\\\"
+    <testcase classname=\\\"\\$className\\\" name=\\\"\\$testName\\\">
+      <failure message=\\\"\\$message\\\" type=\\\"\\$(\\$violation.Severity)\\\"/>
+    </testcase>
+\\\"@
+                                } else {
+                                    \\$junit += @\\\"
+    <testcase classname=\\\"\\$className\\\" name=\\\"\\$testName\\\"/>
+\\\"@
+                                }
+                            }
+                            \\$junit += @'
+  </testsuite>
+</testsuites>
+'@
+                            \\$junit | Out-File '.powershield-reports/junit-report.xml' -Encoding UTF8
+                            
+                            # Generate Markdown report
+                            . /tmp/powershield/scripts/Generate-SecurityReport.ps1
+                            Generate-SecurityReport -InputFile '.powershield-reports/analysis.json' -OutputFile '.powershield-reports/security-report.md'
+                            
+                            # Generate HTML report for Jenkins
+                            \\$html = @\\\"
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PowerShield Security Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        .summary { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        .critical { color: #d32f2f; }
+        .high { color: #f57c00; }
+        .medium { color: #fbc02d; }
+        .low { color: #388e3c; }
+        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: left; }
+        th { background-color: #4CAF50; color: white; }
+        tr:nth-child(even) { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>🛡️ PowerShield Security Analysis Report</h1>
+    <div class=\\\"summary\\\">
+        <h2>Summary</h2>
+        <p><strong>Files Analyzed:</strong> \\$(\\$result.FilesAnalyzed)</p>
+        <p><strong>Total Violations:</strong> \\$(\\$filteredViolations.Count)</p>
+        <p class=\\\"critical\\\"><strong>Critical:</strong> \\$criticalCount</p>
+        <p class=\\\"high\\\"><strong>High:</strong> \\$highCount</p>
+        <p class=\\\"medium\\\"><strong>Medium:</strong> \\$mediumCount</p>
+        <p class=\\\"low\\\"><strong>Low:</strong> \\$lowCount</p>
+    </div>
+    <h2>Violations</h2>
+    <table>
+        <tr>
+            <th>Severity</th>
+            <th>Rule</th>
+            <th>File</th>
+            <th>Line</th>
+            <th>Message</th>
+        </tr>
+\\\"@
+                            
+                            foreach (\\$violation in \\$filteredViolations | Sort-Object { \\$severityMap[\\$_.Severity.ToString()] } -Descending) {
+                                \\$html += @\\\"
+        <tr>
+            <td class=\\\"\\$(\\$violation.Severity.ToString().ToLower())\\\">\\$(\\$violation.Severity)</td>
+            <td>\\$(\\$violation.RuleId)</td>
+            <td>\\$(\\$violation.FilePath)</td>
+            <td>\\$(\\$violation.LineNumber)</td>
+            <td>\\$(\\$violation.Message)</td>
+        </tr>
+\\\"@
+                            }
+                            
+                            \\$html += @'
+    </table>
+</body>
+</html>
+'@
+                            \\$html | Out-File '.powershield-reports/security-report.html' -Encoding UTF8
+                            
+                            # Save counts for Jenkins
+                            \\$criticalCount | Out-File '.powershield-reports/critical-count.txt' -NoNewline
+                            \\$filteredViolations.Count | Out-File '.powershield-reports/total-count.txt' -NoNewline
+                            
+                            # Fail if critical issues found and flag is set
+                            if (\\$criticalCount -gt 0 -and '$FAIL_ON_CRITICAL' -eq 'true') {
+                                Write-Error \\\"Found \\$criticalCount critical security violations\\\"
+                                exit 1
+                            }
+                            
+                            Write-Host 'Security analysis complete'
+                        "
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit '.powershield-reports/junit-report.xml'
+                    archiveArtifacts artifacts: '.powershield-reports/**', fingerprint: true
+                    publishHTML([
+                        allowMissing: false,
+                        alwaysLinkToLastBuild: true,
+                        keepAll: true,
+                        reportDir: '.powershield-reports',
+                        reportFiles: 'security-report.html',
+                        reportName: 'PowerShield Security Report'
+                    ])
+                    
+                    // Record issues with Warnings NG plugin if available
+                    script {
+                        try {
+                            recordIssues(
+                                tools: [sarif(pattern: '.powershield-reports/analysis.sarif')],
+                                qualityGates: [[threshold: 1, type: 'TOTAL_HIGH', criticality: 'UNSTABLE']]
+                            )
+                        } catch (Exception e) {
+                            echo "Warnings NG plugin not available: ${e.message}"
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Post Results') {
+            when {
+                changeRequest()
+            }
+            steps {
+                script {
+                    try {
+                        def report = readFile('.powershield-reports/security-report.md')
+                        def criticalCount = readFile('.powershield-reports/critical-count.txt').trim()
+                        def totalCount = readFile('.powershield-reports/total-count.txt').trim()
+                        
+                        def comment = """## 🛡️ PowerShield Security Analysis Results
+
+**Total Violations:** ${totalCount}
+**Critical Issues:** ${criticalCount}
+
+<details>
+<summary>📊 View Full Report</summary>
+
+${report}
+
+</details>
+"""
+                        
+                        // Post to GitHub PR (requires GitHub plugin)
+                        if (env.CHANGE_ID) {
+                            pullRequest.comment(comment)
+                        }
+                    } catch (Exception e) {
+                        echo "Failed to post PR comment: ${e.message}"
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        success {
+            echo '✅ Security analysis passed'
+        }
+        failure {
+            echo '❌ Security analysis failed - critical issues found'
+        }
+        always {
+            cleanWs(patterns: [[pattern: '/tmp/powershield', type: 'EXCLUDE']])
+        }
+    }
+}

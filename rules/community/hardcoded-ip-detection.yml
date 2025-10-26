@@ -1,0 +1,37 @@
+# Community Custom Rule: Hardcoded IP Address Detection
+# Detects hardcoded IP addresses in scripts which reduces portability
+
+rule:
+  id: "HardcodedIPAddress"
+  name: "Hardcoded IP Address Detection"
+  description: "Detects hardcoded IP addresses which should be externalized to configuration"
+  severity: "Medium"
+  category: "Configuration"
+  cwe: ["CWE-798"]  # Use of Hard-coded Credentials
+  
+  patterns:
+    - type: "regex"
+      pattern: '\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b'
+      message: "Hardcoded IP address detected - consider using configuration files or parameters"
+  
+  remediation: |
+    Hardcoded IP addresses reduce script portability and make maintenance difficult.
+    
+    Instead, use:
+    - Configuration files (JSON, YAML, XML)
+    - Environment variables
+    - Script parameters
+    - Service discovery
+    
+    # Avoid
+    $server = "192.168.1.100"
+    Invoke-WebRequest -Uri "http://192.168.1.100/api"
+    
+    # Better
+    $server = $env:SERVER_IP ?? (Get-Content config.json | ConvertFrom-Json).ServerIP
+    Invoke-WebRequest -Uri "http://$server/api"
+  
+  metadata:
+    author: "PowerShield Community"
+    version: "1.0.0"
+    tags: ["configuration", "portability", "hardcoded"]

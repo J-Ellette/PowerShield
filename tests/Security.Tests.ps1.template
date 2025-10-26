@@ -1,0 +1,73 @@
+#Requires -Version 7.0
+#Requires -Module Pester
+
+<#
+.SYNOPSIS
+    PowerShield Security Tests Template
+.DESCRIPTION
+    Template for creating custom security validation tests for PowerShield.
+    Customize this file to add project-specific security checks.
+.NOTES
+    This is a template file. Customize it for your project needs.
+#>
+
+Describe "PowerShield Security Tests" {
+    BeforeAll {
+        # Import PowerShield analyzer
+        $modulePath = Join-Path $PSScriptRoot '../src/PowerShellSecurityAnalyzer.psm1'
+        if (Test-Path $modulePath) {
+            Import-Module $modulePath -Force
+        }
+    }
+    
+    Context "Project-Specific Security Rules" {
+        It "Should not contain sensitive configuration files" {
+            $sensitiveFiles = Get-ChildItem -Path . -Include '.env','.env.local','*.key','*.pem' -Recurse -ErrorAction SilentlyContinue
+            $sensitiveFiles.Count | Should -Be 0 -Because "Sensitive files should not be committed"
+        }
+        
+        It "Should not contain hardcoded secrets" {
+            $files = Get-ChildItem -Path . -Include *.ps1,*.psm1 -Recurse -ErrorAction SilentlyContinue
+            $violations = @()
+            
+            foreach ($file in $files) {
+                $content = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+                # Check for common secret patterns
+                if ($content -match '(?i)(password|secret|token|api[_-]?key)\s*=\s*[''"][^''"]{8,}') {
+                    $violations += $file.FullName
+                }
+            }
+            
+            $violations.Count | Should -Be 0 -Because "No hardcoded secrets should be present"
+        }
+    }
+    
+    Context "PowerShell Best Practices" {
+        It "Should use approved verbs for functions" {
+            $files = Get-ChildItem -Path ./src -Include *.ps1,*.psm1 -Recurse -ErrorAction SilentlyContinue
+            $violations = @()
+            
+            foreach ($file in $files) {
+                $content = Get-Content $file.FullName -Raw -ErrorAction SilentlyContinue
+                # Simple check for function definitions with non-approved verbs
+                $functions = [regex]::Matches($content, '(?m)^function\s+(\w+)-')
+                foreach ($match in $functions) {
+                    $verb = $match.Groups[1].Value
+                    if ($verb -notin (Get-Verb).Verb) {
+                        $violations += "$($file.Name): $verb"
+                    }
+                }
+            }
+            
+            $violations.Count | Should -Be 0 -Because "All functions should use approved PowerShell verbs"
+        }
+    }
+    
+    Context "Integration Tests" {
+        It "Should be able to analyze the project itself" {
+            $result = Invoke-WorkspaceAnalysis -WorkspacePath . -ErrorAction SilentlyContinue
+            $result | Should -Not -BeNullOrEmpty
+            $result.FilesAnalyzed | Should -BeGreaterThan 0
+        }
+    }
+}

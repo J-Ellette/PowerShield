@@ -1,0 +1,176 @@
+#!/usr/bin/env pwsh
+#Requires -Version 7.0
+
+<#
+.SYNOPSIS
+    PowerShield pre-commit hook for local security validation
+.DESCRIPTION
+    This pre-commit hook analyzes staged PowerShell files for security violations
+    before allowing the commit. It can block commits based on severity and optionally
+    apply auto-fixes.
+.NOTES
+    This script is executed by Git before each commit.
+    Exit code 0 allows the commit, non-zero blocks it.
+#>
+
+# Get the repository root
+$repoRoot = git rev-parse --show-toplevel
+if (-not $repoRoot) {
+    Write-Error "Failed to determine repository root"
+    exit 1
+}
+
+# Import PowerShield modules
+try {
+    # POWERSHIELD-SUPPRESS-NEXT: DangerousModules - Controlled path within repository
+    Import-Module "$repoRoot/src/PowerShellSecurityAnalyzer.psm1" -Force -ErrorAction Stop
+    # POWERSHIELD-SUPPRESS-NEXT: DangerousModules - Controlled path within repository
+    Import-Module "$repoRoot/src/ConfigLoader.psm1" -Force -ErrorAction Stop
+} catch {
+    Write-Error "Failed to load PowerShield modules: $_"
+    exit 1
+}
+
+# Load configuration
+$config = Import-PowerShieldConfiguration -WorkspacePath $repoRoot
+
+# Check if hooks are enabled
+if ($config.Hooks -and $config.Hooks.enabled -eq $false) {
+    Write-Host "PowerShield pre-commit hook is disabled in configuration" -ForegroundColor Yellow
+    exit 0
+}
+
+# Get staged PowerShell files
+$stagedFiles = git diff --cached --name-only --diff-filter=ACM | Where-Object {
+    $_ -match '\.(ps1|psm1|psd1)$'
+}
+
+if (-not $stagedFiles) {
+    # No PowerShell files to analyze
+    exit 0
+}
+
+Write-Host "PowerShield: Analyzing $($stagedFiles.Count) staged PowerShell file(s)..." -ForegroundColor Cyan
+
+# Convert relative paths to absolute paths
+$stagedFilePaths = $stagedFiles | ForEach-Object {
+    Join-Path $repoRoot $_
+} | Where-Object { Test-Path $_ }
+
+if (-not $stagedFilePaths) {
+    # No files exist (might be deletions)
+    exit 0
+}
+
+# Analyze staged files
+$allViolations = @()
+$criticalCount = 0
+$highCount = 0
+$mediumCount = 0
+$lowCount = 0
+
+foreach ($filePath in $stagedFilePaths) {
+    try {
+        $result = Invoke-SecurityAnalysis -ScriptPath $filePath -EnableSuppressions
+        
+        if ($result.Violations -and $result.Violations.Count -gt 0) {
+            $allViolations += $result.Violations
+            
+            # Count by severity
+            foreach ($violation in $result.Violations) {
+                switch ($violation.Severity) {
+                    'Critical' { $criticalCount++ }
+                    'High' { $highCount++ }
+                    'Medium' { $mediumCount++ }
+                    'Low' { $lowCount++ }
+                }
+            }
+        }
+    } catch {
+        Write-Warning "Failed to analyze ${filePath}: $($_.Exception.Message)"
+    }
+}
+
+# Display results
+if ($allViolations.Count -eq 0) {
+    Write-Host "✓ No security violations found" -ForegroundColor Green
+    exit 0
+}
+
+Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
+Write-Host "PowerShield Security Analysis Results" -ForegroundColor Yellow
+Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
+
+Write-Host "`nSummary:" -ForegroundColor White
+if ($criticalCount -gt 0) {
+    Write-Host "  Critical: $criticalCount" -ForegroundColor Red
+}
+if ($highCount -gt 0) {
+    Write-Host "  High: $highCount" -ForegroundColor Red
+}
+if ($mediumCount -gt 0) {
+    Write-Host "  Medium: $mediumCount" -ForegroundColor Yellow
+}
+if ($lowCount -gt 0) {
+    Write-Host "  Low: $lowCount" -ForegroundColor Gray
+}
+
+Write-Host "`nTotal violations: $($allViolations.Count)" -ForegroundColor White
+
+# Show top violations (up to 5)
+$topViolations = $allViolations | Sort-Object -Property Severity -Descending | Select-Object -First 5
+
+Write-Host "`nTop Issues:" -ForegroundColor White
+foreach ($violation in $topViolations) {
+    $severityColor = switch ($violation.Severity) {
+        'Critical' { 'Red' }
+        'High' { 'Red' }
+        'Medium' { 'Yellow' }
+        'Low' { 'Gray' }
+        default { 'White' }
+    }
+    
+    $relPath = $violation.FilePath -replace [regex]::Escape($repoRoot), '.'
+    Write-Host "  [$($violation.Severity)] $relPath`:$($violation.LineNumber)" -ForegroundColor $severityColor
+    Write-Host "    $($violation.RuleId): $($violation.Message)" -ForegroundColor Gray
+}
+
+if ($allViolations.Count -gt 5) {
+    Write-Host "`n  ... and $($allViolations.Count - 5) more" -ForegroundColor Gray
+}
+
+# Determine if commit should be blocked
+$blockOn = if ($config.Hooks -and $config.Hooks.block_on) {
+    $config.Hooks.block_on
+} elseif ($config.CI -and $config.CI.fail_on) {
+    $config.CI.fail_on
+} else {
+    @('Critical', 'High')
+}
+
+$shouldBlock = $false
+foreach ($severity in $blockOn) {
+    switch ($severity) {
+        'Critical' { if ($criticalCount -gt 0) { $shouldBlock = $true } }
+        'High' { if ($highCount -gt 0) { $shouldBlock = $true } }
+        'Medium' { if ($mediumCount -gt 0) { $shouldBlock = $true } }
+        'Low' { if ($lowCount -gt 0) { $shouldBlock = $true } }
+    }
+}
+
+Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
+
+if ($shouldBlock) {
+    Write-Host "✗ Commit blocked due to security violations" -ForegroundColor Red
+    Write-Host "`nTo proceed, you can:" -ForegroundColor Yellow
+    Write-Host "  1. Fix the security issues" -ForegroundColor Gray
+    Write-Host "  2. Add suppression comments (see docs/SUPPRESSION_GUIDE.md)" -ForegroundColor Gray
+    Write-Host "  3. Bypass this check: git commit --no-verify" -ForegroundColor Gray
+    Write-Host "  4. Disable hook in .powershield.yml: hooks.enabled = false" -ForegroundColor Gray
+    Write-Host "`nFor more information, run: pwsh powershield.ps1 analyze" -ForegroundColor Cyan
+    exit 1
+} else {
+    Write-Host "⚠ Violations found but commit allowed (below blocking threshold)" -ForegroundColor Yellow
+    Write-Host "Consider fixing these issues before committing" -ForegroundColor Gray
+    exit 0
+}

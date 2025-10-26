@@ -1,0 +1,31 @@
+# Custom PowerShield Rule Template - Command Detection
+# This template demonstrates how to detect specific PowerShell commands
+
+rule:
+  id: "CustomRule001"
+  name: "Detect Unsafe Command"
+  description: "Detects usage of potentially unsafe PowerShell command"
+  severity: "High"  # Options: Low, Medium, High, Critical
+  category: "Security"
+  cwe: ["CWE-XYZ"]
+  mitre_attack: ["T1059.001"]
+  owasp: ["A01:2021"]
+  help_uri: "https://example.com/rules/CustomRule001"
+  
+  patterns:
+    - type: "command"
+      command: "Invoke-UnsafeCommand"
+      message: "Unsafe command detected"
+      fix:
+        description: "Use safe alternative"
+        replacement: "Invoke-SafeCommand"
+  
+  remediation: |
+    Use the safe alternative: Invoke-SafeCommand
+    
+    Example:
+    # Unsafe
+    Invoke-UnsafeCommand -Data $userInput
+    
+    # Safe
+    Invoke-SafeCommand -Data $userInput

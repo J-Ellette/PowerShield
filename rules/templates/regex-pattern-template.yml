@@ -1,0 +1,17 @@
+# Custom PowerShield Rule Template - Regex Pattern Detection
+# This template demonstrates how to detect code patterns using regular expressions
+
+rule:
+  id: "CustomRule002"
+  name: "Detect Dangerous Pattern"
+  description: "Detects dangerous code patterns using regex"
+  severity: "Medium"
+  category: "Security"
+  
+  patterns:
+    - type: "regex"
+      pattern: 'dangerous-pattern-\w+'
+      message: "Dangerous pattern found"
+  
+  remediation: |
+    Avoid using this dangerous pattern. Use the recommended approach instead.

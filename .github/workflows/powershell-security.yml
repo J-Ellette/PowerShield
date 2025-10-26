@@ -1,0 +1,417 @@
+name: PowerShield - PowerShell Security Analysis
+
+on:
+  push:
+    branches: [ main, develop, 'feature/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      severity_threshold:
+        description: 'Minimum severity level to report'
+        required: false
+        default: 'Medium'
+        type: choice
+        options:
+        - Low
+        - Medium
+        - High
+        - Critical
+
+env:
+  PowerShield_VERSION: '1.1.0'
+  PowerShield_IGNORE: '.github/,scripts/,src/'
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  security-analysis:
+    name: Security Analysis
+    runs-on: ubuntu-latest
+
+    outputs:
+      violations-count: ${{ steps.analyze.outputs.violations-count }}
+      critical-count: ${{ steps.analyze.outputs.critical-count }}
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup PowerShell
+      shell: pwsh
+      run: |
+        $PSVersionTable
+        Write-Host "PowerShell is ready"
+
+    - name: Run Security Analysis
+      id: analyze
+      shell: pwsh
+      env:
+        SEVERITY_THRESHOLD: ${{ github.event.inputs.severity_threshold || 'Medium' }}
+      run: |
+        # Import the analyzer module
+        Import-Module ./src/PowerShellSecurityAnalyzer.psm1 -Force
+
+        try {
+          Write-Host "Starting PowerShield security analysis..."
+          Write-Host "Configuration: Loading from .powershield.yml if present"
+          Write-Host "Suppressions: Enabled"
+          
+          # Use new analyzer with config and suppression support
+          $result = Invoke-WorkspaceAnalysis -WorkspacePath "." -EnableSuppressions
+
+          if ($null -eq $result -or $null -eq $result.Results) {
+            Write-Warning "Analysis returned no results. Creating empty result structure."
+            $result = [pscustomobject]@{
+              FilesAnalyzed = 0
+              TotalViolations = 0
+              Results = @()
+              Summary = @{}
+            }
+          }
+
+          Write-Host "Analysis completed. Files analyzed: $($result.FilesAnalyzed)"
+          Write-Host "Total violations: $($result.TotalViolations)"
+
+          # Severity threshold from env (can be overridden by .powershield.yml)
+          $severityThreshold = $env:SEVERITY_THRESHOLD
+          if (-not $severityThreshold) { $severityThreshold = 'Medium' }
+          Write-Host "Severity threshold: $severityThreshold"
+
+          # Build flat list of violations safely
+          $allViolations = @()
+          foreach ($fileResult in $result.Results) {
+            if ($null -ne $fileResult -and $null -ne $fileResult.Violations) {
+              $allViolations += $fileResult.Violations
+            }
+          }
+
+          # Ensure no null entries
+          $allViolations = @($allViolations | Where-Object { $_ -ne $null })
+
+          # --- Begin: PowerShield path-ignore processing ---
+          # Build ignore patterns from .powershieldignore and PowerShield_IGNORE env var
+          $ignorePatterns = @('.github/', '.github/workflows/', '.git/', 'scripts/', 'tools/', 'src/PowerShellSecurityAnalyzer.psm1')
+
+          if (Test-Path '.powershieldignore') {
+            $filePatterns = Get-Content '.powershieldignore' | ForEach-Object { $_.Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') }
+            $ignorePatterns += $filePatterns
+          }
+
+          if ($env:PowerShield_IGNORE) {
+            $envPatterns = $env:PowerShield_IGNORE -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }
+            $ignorePatterns += $envPatterns
+          }
+
+          # Normalize simple patterns to wildcard fragments (keep slashes for path comparisons)
+          $ignorePatterns = $ignorePatterns | ForEach-Object {
+            $p = $_ -replace '^\^','' -replace '/$',''
+            if ($p -notmatch '/') { "$p*" } else { $p }
+          } | Select-Object -Unique
+
+          function Should-IgnorePath($path, $patterns) {
+            if (-not $path) { return $false }
+            $norm = ($path -replace '\\','/') -replace '^\./',''
+            foreach ($pat in $patterns) {
+              # Use a simple contains-style check for now
+              if ($norm -like "*$pat*") { return $true }
+            }
+            return $false
+          }
+
+          # Filter out violations that reference ignored paths
+          $allViolations = @($allViolations | Where-Object {
+            # prefer FilePath, fall back to Path property
+            $p = $null
+            if ($_.PSObject.Properties.Match('FilePath').Count -gt 0) { 
+                $p = $_.FilePath 
+            }
+            elseif ($_.PSObject.Properties.Match('Path').Count -gt 0) { 
+                $p = $_.Path 
+            }
+            else { 
+                $p = $null 
+            }
+
+            -not (Should-IgnorePath $p $ignorePatterns)
+          })
+          # --- End: PowerShield path-ignore processing ---
+
+          # Map severities to numeric values safely
+          $severityMap = @{ 'Low' = 1; 'Medium' = 2; 'High' = 3; 'Critical' = 4 }
+          $thresholdValue = $severityMap[$severityThreshold]
+          if (-not $thresholdValue) { $thresholdValue = 2 }  # default to Medium
+
+          # Filter with null-safety (do not call .ToString() on a null)
+          $filteredViolations = $allViolations | Where-Object {
+            if ($_ -eq $null) { return $false }
+            $sev = $_.Severity
+            if ($sev -eq $null) { return $false }
+
+            # Accept either string or object; only call ToString when $sev is not null
+            if ($sev -is [string]) {
+              $sevKey = $sev
+            } else {
+              try { $sevKey = $sev.ToString() } catch { return $false }
+            }
+
+            $sevVal = $severityMap[$sevKey]
+            if (-not $sevVal) { return $false }
+            return ($sevVal -ge $thresholdValue)
+          }
+
+          $criticalCount = @($filteredViolations | Where-Object { $_.Severity -eq 'Critical' }).Count
+          $totalCount = $filteredViolations.Count
+
+          Write-Host "Violations after filtering: $totalCount"
+          Write-Host "Critical violations: $criticalCount"
+
+          # Prepare export data (use env vars for GitHub context)
+          $exportData = @{
+            metadata = @{
+              version = $env:PowerShield_VERSION
+              timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+              repository = $env:GITHUB_REPOSITORY
+              ref = $env:GITHUB_REF
+              sha = $env:GITHUB_SHA
+            }
+            summary = $result.Summary
+            violations = $filteredViolations
+          }
+
+          # Export results
+          $exportData | ConvertTo-Json -Depth 10 | Out-File -FilePath 'powershield-results.json' -Encoding UTF8
+          Write-Host "Results exported to powershield-results.json"
+
+          # Generate SARIF using converter if present; fallback to minimal SARIF if conversion fails
+          if (Test-Path ./scripts/Convert-ToSARIF.ps1) {
+            . ./scripts/Convert-ToSARIF.ps1
+            try {
+              Convert-ToSARIF -InputFile 'powershield-results.json' -OutputFile 'powershield-results.sarif' -ErrorAction Stop
+            } catch {
+              Write-Warning "Convert-ToSARIF failed: $_. Creating minimal SARIF."
+              @{ version = "2.1.0"; runs = @() } | ConvertTo-Json -Depth 10 | Out-File powershield-results.sarif -Encoding UTF8
+            }
+          } else {
+            Write-Warning "Convert-ToSARIF.ps1 not found. Creating minimal SARIF."
+            @{ version = "2.1.0"; runs = @() } | ConvertTo-Json -Depth 10 | Out-File powershield-results.sarif -Encoding UTF8
+          }
+
+          # Generate human-readable report; fallback if generator missing/fails
+          if (Test-Path ./scripts/Generate-SecurityReport.ps1) {
+            . ./scripts/Generate-SecurityReport.ps1
+            try {
+              Generate-SecurityReport -InputFile 'powershield-results.json' -OutputFile 'security-report.md' -ErrorAction Stop
+            } catch {
+              Write-Warning "Generate-SecurityReport failed: $_. Creating fallback report."
+              "## PowerShield Security Analysis`n`nReport generation failed or no data." | Out-File security-report.md -Encoding UTF8
+            }
+          } else {
+            "## PowerShield Security Analysis`n`nNo report generator found." | Out-File security-report.md -Encoding UTF8
+          }
+
+          # Ensure SARIF/JSON/report exist (extra safety)
+          if (-not (Test-Path 'powershield-results.sarif')) {
+            @{ version = "2.1.0"; runs = @() } | ConvertTo-Json -Depth 10 | Out-File powershield-results.sarif -Encoding UTF8
+          }
+          if (-not (Test-Path 'powershield-results.json')) {
+            @{ metadata = @{ version = $env:PowerShield_VERSION }; summary = @{}; violations = @() } |
+              ConvertTo-Json -Depth 10 | Out-File -FilePath 'powershield-results.json' -Encoding UTF8
+          }
+          if (-not (Test-Path 'security-report.md')) {
+            "## PowerShield Security Analysis`n`nAnalysis failed or no report generated." | Out-File -FilePath 'security-report.md' -Encoding UTF8
+          }
+
+          # Set outputs for the step
+          "violations-count=$totalCount" >> $env:GITHUB_OUTPUT
+          "critical-count=$criticalCount" >> $env:GITHUB_OUTPUT
+
+          # Display summary
+          Write-Host ""
+          Write-Host "=== PowerShield Analysis Summary ==="
+          Write-Host "Total Violations: $totalCount"
+          Write-Host "Critical: $criticalCount"
+          Write-Host "High: $(@($filteredViolations | Where-Object { $_.Severity -eq 'High' }).Count)"
+          Write-Host "Medium: $(@($filteredViolations | Where-Object { $_.Severity -eq 'Medium' }).Count)"
+          Write-Host "Low: $(@($filteredViolations | Where-Object { $_.Severity -eq 'Low' }).Count)"
+
+          # Exit with error if critical issues found
+          if ($criticalCount -gt 0) {
+            Write-Error "❌ Found $criticalCount critical security violations"
+            exit 1
+          } elseif ($totalCount -gt 0) {
+            Write-Warning "⚠️ Found $totalCount security violations"
+          } else {
+            Write-Host "✅ No security violations found!"
+          }
+
+        } catch {
+          Write-Error "Analysis failed with exception: $_"
+
+          # Create fallback outputs so upload steps have files to work with
+          $fallback = @{
+            metadata = @{
+              version = $env:PowerShield_VERSION
+              timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+              repository = $env:GITHUB_REPOSITORY
+              ref = $env:GITHUB_REF
+              sha = $env:GITHUB_SHA
+            }
+            summary = @{}
+            violations = @()
+          }
+          $fallback | ConvertTo-Json -Depth 10 | Out-File -FilePath 'powershield-results.json' -Encoding UTF8
+
+          @{ version = "2.1.0"; runs = @() } | ConvertTo-Json -Depth 10 | Out-File powershield-results.sarif -Encoding UTF8
+
+          "## PowerShield Security Analysis`n`nAnalysis failed or no report generated." | Out-File security-report.md -Encoding UTF8
+
+          "violations-count=0" >> $env:GITHUB_OUTPUT
+          "critical-count=0" >> $env:GITHUB_OUTPUT
+
+          # Fail the step to signal error while preserving artifacts for diagnostics
+          exit 1
+        }
+
+    - name: Ensure Analysis Artifacts Exist
+      if: always()
+      shell: pwsh
+      run: |
+        Write-Host "Ensuring analysis artifacts exist..."
+        if (-not (Test-Path 'powershield-results.json')) {
+          Write-Host "powershield-results.json missing — creating fallback."
+          @{ metadata = @{ version = $env:PowerShield_VERSION; timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ') }; summary = @{}; violations = @() } |
+            ConvertTo-Json -Depth 10 | Out-File -FilePath 'powershield-results.json' -Encoding UTF8
+        }
+        if (-not (Test-Path 'powershield-results.sarif')) {
+          Write-Host "powershield-results.sarif missing — creating minimal SARIF."
+          @{ version = "2.1.0"; runs = @() } | ConvertTo-Json -Depth 10 | Out-File -FilePath 'powershield-results.sarif' -Encoding UTF8
+        }
+        if (-not (Test-Path 'security-report.md')) {
+          Write-Host "security-report.md missing — creating fallback report."
+          "## PowerShield Security Analysis`n`nAnalysis failed or no report generated." | Out-File -FilePath 'security-report.md' -Encoding UTF8
+        }
+
+    - name: Upload SARIF Results
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: powershield-results.sarif
+        category: 'PowerShield-Security-Analysis'
+
+    - name: Upload Analysis Artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: psts-analysis-results
+        path: |
+          powershield-results.json
+          powershield-results.sarif
+          security-report.md
+        retention-days: 30
+
+    - name: Comment on PR
+      if: github.event_name == 'pull_request' && always()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          
+          // Read report if it exists
+          let reportContent = '';
+          try {
+            reportContent = fs.readFileSync('security-report.md', 'utf8');
+          } catch (error) {
+            reportContent = '## PowerShield Security Analysis\n\nAnalysis failed or no report generated.';
+          }
+          
+          const violations = '${{ steps.analyze.outputs.violations-count }}';
+          const critical = '${{ steps.analyze.outputs.critical-count }}';
+          
+          // Generate summary comment
+          let comment = `## 🔒 PowerShield Security Analysis Results\n\n`;
+          
+          if (critical > 0) {
+            comment += `⚠️ **${critical} Critical Security Issues Found!**\n\n`;
+          } else if (violations > 0) {
+            comment += `✅ No critical issues, but ${violations} other violations found\n\n`;
+          } else {
+            comment += `✅ No security violations found!\n\n`;
+          }
+          
+          comment += `### Summary\n`;
+          comment += `- **Total Violations:** ${violations}\n`;
+          comment += `- **Critical Issues:** ${critical}\n`;
+          comment += `\n`;
+          
+          if (violations > 0) {
+            comment += `<details>\n<summary>📊 View Full Report</summary>\n\n`;
+            comment += reportContent;
+            comment += `\n</details>\n\n`;
+          }
+          
+          comment += `\n📊 [View in Security Tab](https://github.com/${{ github.repository }}/security/code-scanning)\n`;
+          
+          if (critical > 0) {
+            comment += `\n⚠️ **Please address critical security issues before merging.**`;
+          }
+          
+          // Post comment
+          await github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  test-analyzer:
+    name: Test Analyzer
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Test Security Analyzer
+      shell: pwsh
+      run: |
+        Write-Host "Testing PowerShield Security Analyzer..."
+        
+        # Import module
+        Import-Module ./src/PowerShellSecurityAnalyzer.psm1 -Force
+        
+        # Test on known vulnerable scripts - recursively get all test scripts
+        $testScripts = Get-ChildItem -Path ./tests/TestScripts -Filter *.ps1 -Recurse
+        
+        Write-Host "Running tests on $($testScripts.Count) test scripts..."
+        
+        $totalTestViolations = 0
+        foreach ($script in $testScripts) {
+          Write-Host "`nTesting: $($script.FullName.Replace((Get-Location).Path, '.'))"
+          $result = Invoke-SecurityAnalysis -ScriptPath $script.FullName
+          Write-Host "  Violations found: $($result.Violations.Count)"
+          $totalTestViolations += $result.Violations.Count
+          
+          # Display violations
+          foreach ($violation in $result.Violations) {
+            if ($violation.LineNumber) {
+              Write-Host "    - [$($violation.Severity)] $($violation.RuleId) at line $($violation.LineNumber)"
+            }
+          }
+        }
+        
+        Write-Host "`n=== Test Results ==="
+        Write-Host "Total test violations detected: $totalTestViolations"
+        
+        # Verify we found some violations in test scripts
+        if ($totalTestViolations -eq 0) {
+          Write-Error "ERROR: No violations found in test scripts. Analyzer may not be working correctly."
+          exit 1
+        } else {
+          Write-Host "✅ Analyzer successfully detected violations in test scripts"
+        }

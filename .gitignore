@@ -1,0 +1,38 @@
+# Generated files
+powershield-results.json
+powershield-results.sarif
+security-report.md
+test-*.json
+test-*.sarif
+test-*.md
+
+# Reports directory
+.powershield-reports/
+**/.powershield-reports/
+
+# Cache directories
+.powershield-cache/
+**/.powershield-cache/
+# Legacy filenames (for backward compatibility during transition)
+psts-results.json
+psts-results.sarif
+
+# Node
+node_modules/
+dist/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# PowerShell
+*.psm1.bak
+*.ps1.bak

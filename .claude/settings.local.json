@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -Command \"Get-Content ''C:\\GitHub\\PowerShellTestingSuite\\buildplans\\codex_phase_1_ideas.md'' | Select-Object -First 5\")",
+      "Bash(pwsh -NoProfile -Command:*)",
+      "Bash(pwsh -Command:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

@@ -1,0 +1,10 @@
+# Ignore scanner's own files and workflow infra
+.github/
+.github/workflows/
+.git/
+scripts/
+tools/
+src/PowerShellSecurityAnalyzer.psm1
+
+# Ignore test files - they contain intentional test patterns that trigger security rules
+tests/Test-*.ps1

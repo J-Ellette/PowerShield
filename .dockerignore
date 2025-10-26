@@ -1,0 +1,52 @@
+# Git files
+.git
+.gitignore
+.github
+
+# Documentation
+*.md
+!README.md
+docs/
+buildplans/
+copilot.md
+
+# Test files
+tests/
+.powershield
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+.powershield-reports/
+*.sarif
+*.junit.xml
+*.tap
+*.csv
+
+# Node modules (from actions)
+actions/
+node_modules/
+
+# CI/CD files
+.circleci/
+.gitlab-ci.yml
+azure-pipelines.yml
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# License and other meta files
+LICENSE
+IMPLEMENTATION_*.md
