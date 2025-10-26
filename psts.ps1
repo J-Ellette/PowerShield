@@ -68,7 +68,7 @@ function Invoke-Analyze {
         Compare against baseline file
     .PARAMETER EnableSuppressions
         Enable suppression comment processing
-    .PARAMETER Profile
+    .PARAMETER PerformanceProfile
         Performance profile: fast, balanced, thorough (default: balanced)
     .PARAMETER UseReportsDirectory
         Generate all artifacts in .powershield-reports/ directory
@@ -83,7 +83,7 @@ function Invoke-Analyze {
         [string]$Baseline,
         [switch]$EnableSuppressions,
         [ValidateSet('fast', 'balanced', 'thorough')]
-        [string]$Profile = 'balanced',
+        [string]$PerformanceProfile = 'balanced',
         [switch]$UseReportsDirectory,
         [switch]$Incremental
     )
@@ -105,8 +105,8 @@ function Invoke-Analyze {
     }
     
     # Set up performance profile
-    if ($Profile -ne 'balanced') {
-        Write-Info "Using performance profile: $Profile"
+    if ($PerformanceProfile -ne 'balanced') {
+        Write-Info "Using performance profile: $PerformanceProfile"
         # Note: Profile filtering would be integrated into the analyzer in production
     }
     
@@ -311,7 +311,7 @@ function Export-AnalysisResults {
     )
     
     # Create temp JSON file for converters
-    $jsonTemp = [System.IO.Path]::GetTempFileName()
+    $jsonTemp = (New-TemporaryFile).FullName
     $Result | ConvertTo-Json -Depth 10 | Out-File $jsonTemp
     
     try {
@@ -1759,7 +1759,7 @@ for ($i = 0; $i -lt $Arguments.Count; $i++) {
                 $params['EnableSuppressions'] = $true
             }
             'profile' {
-                $params['Profile'] = $Arguments[++$i]
+                $params['PerformanceProfile'] = $Arguments[++$i]
             }
             'reports-dir' {
                 $params['UseReportsDirectory'] = $true

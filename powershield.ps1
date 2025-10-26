@@ -160,7 +160,7 @@ function Invoke-Analyze {
             'sarif' {
                 # POWERSHIELD-SUPPRESS-NEXT: UnsafeFileInclusion - Controlled path within repository
                 . "$scriptRoot/scripts/Convert-ToSARIF.ps1"
-                $jsonTemp = [System.IO.Path]::GetTempFileName()
+                $jsonTemp = (New-TemporaryFile).FullName
                 $result | ConvertTo-Json -Depth 10 | Out-File $jsonTemp
                 Convert-ToSARIF -InputFile $jsonTemp -OutputFile $OutputFile
                 Remove-Item $jsonTemp -Force
@@ -169,7 +169,7 @@ function Invoke-Analyze {
             'markdown' {
                 # POWERSHIELD-SUPPRESS-NEXT: UnsafeFileInclusion - Controlled path within repository
                 . "$scriptRoot/scripts/Generate-SecurityReport.ps1"
-                $jsonTemp = [System.IO.Path]::GetTempFileName()
+                $jsonTemp = (New-TemporaryFile).FullName
                 $result | ConvertTo-Json -Depth 10 | Out-File $jsonTemp
                 Generate-SecurityReport -InputFile $jsonTemp -OutputFile $OutputFile
                 Remove-Item $jsonTemp -Force
