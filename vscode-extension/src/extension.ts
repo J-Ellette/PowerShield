@@ -8,12 +8,16 @@ import { PowerShieldEngine } from './core/PowerShieldEngine';
 import { PSSecurityProvider } from './providers/SecurityProvider';
 import { RealTimeAnalysisProvider } from './providers/RealTimeAnalysisProvider';
 import { AICodeActionProvider } from './providers/CodeActionProvider';
+import { SecurityHoverProvider } from './providers/HoverProvider';
+import { SecurityTreeProvider } from './providers/TreeProvider';
 
 let powerShieldEngine: PowerShieldEngine;
 let securityProvider: PSSecurityProvider;
 let realTimeAnalysisProvider: RealTimeAnalysisProvider;
 let codeActionProvider: AICodeActionProvider;
 let diagnosticCollection: vscode.DiagnosticCollection;
+let hoverProvider: SecurityHoverProvider;
+let treeProvider: SecurityTreeProvider;
 
 /**
  * Activate the extension
@@ -32,6 +36,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
         // Register providers
         registerSecurityProviders(context, powerShieldEngine);
+        
+        // Register hover provider
+        registerHoverProvider(context);
+        
+        // Register tree view provider
+        registerTreeViewProvider(context);
         
         // Setup real-time analysis
         setupRealTimeAnalysis(context, powerShieldEngine);
@@ -70,6 +80,40 @@ function registerSecurityProviders(
 }
 
 /**
+ * Register hover provider
+ */
+function registerHoverProvider(context: vscode.ExtensionContext): void {
+    // Initialize hover provider
+    hoverProvider = new SecurityHoverProvider();
+    
+    // Register for PowerShell files
+    const hoverDisposable = vscode.languages.registerHoverProvider(
+        { language: 'powershell', scheme: 'file' },
+        hoverProvider
+    );
+    
+    context.subscriptions.push(hoverDisposable);
+    console.log('Hover provider registered');
+}
+
+/**
+ * Register tree view provider
+ */
+function registerTreeViewProvider(context: vscode.ExtensionContext): void {
+    // Initialize tree provider
+    treeProvider = new SecurityTreeProvider();
+    
+    // Register tree view
+    const treeView = vscode.window.createTreeView('powershield-security', {
+        treeDataProvider: treeProvider,
+        showCollapseAll: true
+    });
+    
+    context.subscriptions.push(treeView);
+    console.log('Tree view provider registered');
+}
+
+/**
  * Setup real-time analysis
  */
 function setupRealTimeAnalysis(
@@ -80,7 +124,8 @@ function setupRealTimeAnalysis(
     realTimeAnalysisProvider = new RealTimeAnalysisProvider(
         engine,
         securityProvider,
-        diagnosticCollection
+        diagnosticCollection,
+        hoverProvider
     );
 
     // Setup document watchers
@@ -181,11 +226,17 @@ function registerCommands(
                         );
 
                         let totalViolations = 0;
+                        const allViolations: any[] = [];
+                        
                         for (const fileUri of files) {
                             const document = await vscode.workspace.openTextDocument(fileUri);
                             const violations = await securityProvider.analyzeDocument(document);
                             totalViolations += violations.length;
+                            allViolations.push(...violations);
                         }
+
+                        // Update tree view with all violations
+                        treeProvider.updateWorkspaceSecurity(allViolations);
 
                         vscode.window.showInformationMessage(
                             `PowerShield: Analyzed ${files.length} file(s), found ${totalViolations} security issue(s)`
@@ -293,6 +344,68 @@ function registerCommands(
         }
     );
 
+    // New commands for Phase 2.3
+    const openDocumentationCommand = vscode.commands.registerCommand(
+        'powershield.openDocumentation',
+        async (ruleId: string) => {
+            // Use GitHub rules documentation until docs site is ready
+            const url = `https://github.com/J-Ellette/PowerShield/tree/main/rules`;
+            await vscode.env.openExternal(vscode.Uri.parse(url));
+        }
+    );
+
+    const jumpToViolationCommand = vscode.commands.registerCommand(
+        'powershield.jumpToViolation',
+        async (violation: any) => {
+            try {
+                const uri = vscode.Uri.file(violation.filePath);
+                const document = await vscode.workspace.openTextDocument(uri);
+                const editor = await vscode.window.showTextDocument(document);
+                
+                // Jump to the violation line
+                const line = Math.max(0, violation.lineNumber - 1);
+                const position = new vscode.Position(line, violation.columnNumber || 0);
+                const range = new vscode.Range(position, position);
+                
+                editor.selection = new vscode.Selection(position, position);
+                editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
+            } catch (error) {
+                vscode.window.showErrorMessage(
+                    `Failed to jump to violation: ${error instanceof Error ? error.message : 'Unknown error'}`
+                );
+            }
+        }
+    );
+
+    const refreshSecurityTreeCommand = vscode.commands.registerCommand(
+        'powershield.refreshSecurityTree',
+        async () => {
+            try {
+                // Collect all violations from all open PowerShell files
+                const allViolations: any[] = [];
+                const documents = vscode.workspace.textDocuments.filter(
+                    doc => doc.languageId === 'powershell' && doc.uri.scheme === 'file'
+                );
+
+                for (const document of documents) {
+                    const violations = await securityProvider.analyzeDocument(document);
+                    allViolations.push(...violations);
+                }
+
+                // Update tree view
+                treeProvider.updateWorkspaceSecurity(allViolations);
+                
+                vscode.window.showInformationMessage(
+                    `PowerShield: Found ${allViolations.length} security issue(s)`
+                );
+            } catch (error) {
+                vscode.window.showErrorMessage(
+                    `Failed to refresh security tree: ${error instanceof Error ? error.message : 'Unknown error'}`
+                );
+            }
+        }
+    );
+
     // Register all commands
     context.subscriptions.push(
         analyzeFileCommand,
@@ -305,7 +418,10 @@ function registerCommands(
         explainViolationCommand,
         suppressViolationCommand,
         applyTemplateFixCommand,
-        showDashboardCommand
+        showDashboardCommand,
+        openDocumentationCommand,
+        jumpToViolationCommand,
+        refreshSecurityTreeCommand
     );
 
     console.log('Commands registered');
