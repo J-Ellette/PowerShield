@@ -9,6 +9,8 @@ import { PowerShieldEngine } from '../core/PowerShieldEngine';
 import { SecurityViolation } from '../types';
 import { SecurityDiagnosticsProvider } from './DiagnosticsProvider';
 import { SecurityHoverProvider } from './HoverProvider';
+import { IncrementalAnalyzer } from '../performance/IncrementalAnalyzer';
+import { BackgroundAnalyzer } from '../performance/BackgroundAnalyzer';
 
 export class RealTimeAnalysisProvider {
     private analysisTimeouts: Map<string, NodeJS.Timeout> = new Map();
@@ -19,6 +21,11 @@ export class RealTimeAnalysisProvider {
     private diagnosticCollection: vscode.DiagnosticCollection;
     private diagnosticsProvider: SecurityDiagnosticsProvider;
     private hoverProvider: SecurityHoverProvider;
+    private incrementalAnalyzer: IncrementalAnalyzer;
+    private backgroundAnalyzer: BackgroundAnalyzer;
+    private useBackgroundAnalysis: boolean = true;
+    private useIncrementalAnalysis: boolean = true;
+    private documentChangeEvents: Map<string, vscode.TextDocumentContentChangeEvent[]> = new Map();
 
     constructor(
         engine: PowerShieldEngine,
@@ -31,6 +38,11 @@ export class RealTimeAnalysisProvider {
         this.diagnosticCollection = diagnosticCollection;
         this.diagnosticsProvider = new SecurityDiagnosticsProvider(diagnosticCollection);
         this.hoverProvider = hoverProvider;
+        
+        // Initialize performance components
+        this.incrementalAnalyzer = new IncrementalAnalyzer(securityProvider);
+        this.backgroundAnalyzer = new BackgroundAnalyzer();
+        
         this.updateSettings();
     }
 
@@ -41,6 +53,12 @@ export class RealTimeAnalysisProvider {
         const config = this.powerShieldEngine.getConfiguration();
         this.enabled = config.realTimeAnalysis.enabled;
         this.debounceMs = config.realTimeAnalysis.debounceMs;
+        this.useBackgroundAnalysis = config.realTimeAnalysis.backgroundAnalysis;
+        this.useIncrementalAnalysis = config.performance.enableIncrementalAnalysis;
+        
+        // Update performance components
+        this.incrementalAnalyzer.setEnabled(this.useIncrementalAnalysis);
+        this.backgroundAnalyzer.setEnabled(this.useBackgroundAnalysis);
     }
 
     /**
@@ -55,6 +73,13 @@ export class RealTimeAnalysisProvider {
                 }
                 
                 if (this.isPowerShellDocument(event.document)) {
+                    // Track changes for incremental analysis
+                    const uri = event.document.uri.toString();
+                    if (!this.documentChangeEvents.has(uri)) {
+                        this.documentChangeEvents.set(uri, []);
+                    }
+                    this.documentChangeEvents.get(uri)!.push(...event.contentChanges);
+                    
                     await this.scheduleAnalysis(event.document);
                 }
             }
@@ -156,7 +181,12 @@ export class RealTimeAnalysisProvider {
      * Perform the actual analysis
      */
     private async performAnalysis(document: vscode.TextDocument): Promise<void> {
+        const uri = document.uri.toString();
+        
         try {
+            // Get tracked changes for incremental analysis
+            const changes = this.documentChangeEvents.get(uri) || [];
+            
             // Show progress for long-running analysis
             await vscode.window.withProgress(
                 {
@@ -165,8 +195,18 @@ export class RealTimeAnalysisProvider {
                     cancellable: false
                 },
                 async (progress) => {
-                    // Analyze the document
-                    const violations = await this.securityProvider.analyzeDocument(document);
+                    let violations: SecurityViolation[];
+                    
+                    // Use incremental analysis if enabled and we have changes tracked
+                    if (this.useIncrementalAnalysis && changes.length > 0) {
+                        violations = await this.incrementalAnalyzer.analyzeIncremental(document, changes);
+                    } else {
+                        // Fall back to full analysis
+                        violations = await this.securityProvider.analyzeDocument(document);
+                    }
+                    
+                    // Clear tracked changes
+                    this.documentChangeEvents.delete(uri);
 
                     // Update diagnostics
                     this.updateDiagnostics(document, violations);
@@ -225,5 +265,10 @@ export class RealTimeAnalysisProvider {
             clearTimeout(timeout);
         }
         this.analysisTimeouts.clear();
+        
+        // Clean up performance components
+        this.incrementalAnalyzer.clearAllCaches();
+        this.backgroundAnalyzer.dispose();
+        this.documentChangeEvents.clear();
     }
 }
