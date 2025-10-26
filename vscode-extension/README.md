@@ -12,9 +12,17 @@ Real-time PowerShell security analysis with AI-powered fixes for VS Code.
 - **Comprehensive Configuration**: Extensive settings for customization
 - **Multi-file Analysis**: Analyze entire workspace or individual files
 
+### Phase 2.2: AI Integration & Smart Fixes ✅
+
+- **Multi-Provider AI Support**: GitHub Models, OpenAI, Anthropic Claude, Azure OpenAI
+- **AI-Powered Fix Generation**: Context-aware security fixes using AI
+- **Template-Based Fixes**: Rule-based fixes that work without API keys
+- **Intelligent Code Actions**: Quick fixes, explanations, and suppressions
+- **Automatic Fallback Chain**: Primary → Fallbacks → Template-based
+- **Confidence Scoring**: Each fix includes reliability score (0-1)
+
 ### Coming in Future Phases
 
-- **Phase 2.2**: AI-powered fix generation with multiple provider support
 - **Phase 2.3**: Interactive hover explanations and security education
 - **Phase 2.4**: Advanced performance optimizations with incremental analysis
 - **Phase 2.5**: Security dashboard, CodeLens, and reports
@@ -42,6 +50,25 @@ Search for "PowerShield" in the VS Code Extensions marketplace and click Install
 ## Configuration
 
 Configure PowerShield through VS Code settings (`File > Preferences > Settings` or `Cmd/Ctrl + ,`):
+
+### AI Provider Configuration
+
+```json
+{
+  "powershield.aiProvider.primary": "github-models",
+  "powershield.aiProvider.fallback": ["template-based"],
+  "powershield.aiProvider.confidenceThreshold": 0.8
+}
+```
+
+**Supported Providers:**
+- `github-models` - Free for GitHub users (recommended)
+- `openai` - OpenAI GPT-4
+- `anthropic` - Anthropic Claude
+- `azure-openai` - Azure OpenAI Service
+- `template-based` - No API required (always available)
+
+**See [AI Setup Guide](./AI_SETUP.md) for detailed configuration instructions.**
 
 ### Real-Time Analysis
 
@@ -88,11 +115,17 @@ Access commands via the Command Palette (`Cmd/Ctrl + Shift + P`):
 
 - **PowerShield: Analyze Current File** - Analyze the currently open PowerShell file
 - **PowerShield: Analyze Workspace** - Analyze all PowerShell files in the workspace
+- **PowerShield: Generate AI Fix** - Generate AI-powered fix for a security issue
+- **PowerShield: Apply Template Fix** - Apply rule-based fix without AI
+- **PowerShield: Explain Security Issue** - Get detailed explanation of a violation
+- **PowerShield: Suppress Violation** - Add suppression comment for false positives
 - **PowerShield: Configure Settings** - Open PowerShield settings
 - **PowerShield: Clear Cache** - Clear the analysis cache
 - **PowerShield: Show Output** - Show PowerShield output logs
 
 ## Usage
+
+### Basic Analysis
 
 1. **Open a PowerShell file** - PowerShield automatically activates
 2. **Edit your code** - Real-time analysis runs as you type (with debouncing)
@@ -102,6 +135,35 @@ Access commands via the Command Palette (`Cmd/Ctrl + Shift + P`):
    - Diagnostics in the status bar
 4. **Click on issues** - View detailed information about security violations
 5. **Save your file** - Triggers immediate re-analysis
+
+### Using AI-Powered Fixes
+
+1. **Hover over** a security violation (underlined code)
+2. **Click the lightbulb** (💡) icon or press `Ctrl+.` / `Cmd+.`
+3. **Choose an action:**
+   - 🤖 **AI Fix** - Generate context-aware fix using AI provider
+   - 🔧 **Quick Fix** - Apply template-based fix (no API required)
+   - 📖 **Explain** - Get detailed explanation of the security issue
+   - 🙈 **Suppress** - Add suppression comment for false positives
+
+4. **Review the AI-generated fix** in the preview panel
+5. **Accept or reject** the proposed fix
+
+### AI Provider Setup
+
+To use AI-powered fixes, set up an AI provider:
+
+**GitHub Models (Recommended - Free):**
+```bash
+export GITHUB_TOKEN="your_github_token"
+```
+
+**OpenAI:**
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+**See [AI Setup Guide](./AI_SETUP.md) for complete setup instructions.**
 
 ## Security Rules
 
@@ -128,11 +190,19 @@ PowerShield includes 35+ security rules covering:
 - Check that the file is recognized as PowerShell (bottom-right status bar)
 - Try running `PowerShield: Analyze Current File` manually
 
-### Slow Performance
+### No AI Fixes Available
 
-- Increase the debounce time: `powershield.realTimeAnalysis.debounceMs`
-- Disable background analysis if needed
-- Clear the cache: `PowerShield: Clear Cache`
+- Check that an AI provider is configured: see [AI Setup Guide](./AI_SETUP.md)
+- Verify API keys are set in environment variables
+- Template-based fixes always work without configuration
+- Check the PowerShield output channel for errors
+
+### AI Provider Errors
+
+- **"API key not configured"** - Set appropriate environment variable
+- **"All providers failed"** - Check internet connectivity and API keys
+- **"Low confidence fix"** - AI is unsure; use template fix or manual fix
+- Restart VS Code after setting environment variables
 
 ## Development
 
@@ -175,7 +245,17 @@ MIT License - See the main repository for details.
 
 ## Version History
 
-### 2.0.0 (Phase 2.1) - Current
+### 2.1.0 (Phase 2.2) - Current
+
+- **AI Integration**: Multi-provider AI support (GitHub Models, OpenAI, Anthropic, Azure OpenAI)
+- **AI-Powered Fixes**: Context-aware security fixes with confidence scoring
+- **Intelligent Code Actions**: Quick fixes, explanations, and suppressions
+- **Template-Based Fixes**: Rule-based fixes that work without API keys
+- **Automatic Fallback**: Primary → Fallback → Template-based provider chain
+- **Fix Preview**: Review and accept/reject AI-generated fixes
+- **Comprehensive Documentation**: AI setup guide with examples
+
+### 2.0.0 (Phase 2.1)
 
 - Initial VS Code extension release
 - Core extension architecture
