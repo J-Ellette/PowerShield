@@ -68,8 +68,48 @@
         "command": "powershield.configureSettings",
         "title": "Configure Settings",
         "category": "PowerShield"
+      },
+      {
+        "command": "powershield.openDocumentation",
+        "title": "Open Documentation",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.jumpToViolation",
+        "title": "Jump to Violation",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.refreshSecurityTree",
+        "title": "Refresh Security Overview",
+        "category": "PowerShield",
+        "icon": "$(refresh)"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "powershield-security",
+          "name": "PowerShield Security",
+          "icon": "$(shield)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "powershield-security",
+        "contents": "No security issues detected.\n[Analyze Workspace](command:powershield.analyzeWorkspace)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "powershield.refreshSecurityTree",
+          "when": "view == powershield-security",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "PowerShield",
       "properties": {

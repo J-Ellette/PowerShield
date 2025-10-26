@@ -7,6 +7,8 @@ import * as vscode from 'vscode';
 import { PSSecurityProvider } from './SecurityProvider';
 import { PowerShieldEngine } from '../core/PowerShieldEngine';
 import { SecurityViolation } from '../types';
+import { SecurityDiagnosticsProvider } from './DiagnosticsProvider';
+import { SecurityHoverProvider } from './HoverProvider';
 
 export class RealTimeAnalysisProvider {
     private analysisTimeouts: Map<string, NodeJS.Timeout> = new Map();
@@ -15,15 +17,20 @@ export class RealTimeAnalysisProvider {
     private securityProvider: PSSecurityProvider;
     private powerShieldEngine: PowerShieldEngine;
     private diagnosticCollection: vscode.DiagnosticCollection;
+    private diagnosticsProvider: SecurityDiagnosticsProvider;
+    private hoverProvider: SecurityHoverProvider;
 
     constructor(
         engine: PowerShieldEngine,
         securityProvider: PSSecurityProvider,
-        diagnosticCollection: vscode.DiagnosticCollection
+        diagnosticCollection: vscode.DiagnosticCollection,
+        hoverProvider: SecurityHoverProvider
     ) {
         this.powerShieldEngine = engine;
         this.securityProvider = securityProvider;
         this.diagnosticCollection = diagnosticCollection;
+        this.diagnosticsProvider = new SecurityDiagnosticsProvider(diagnosticCollection);
+        this.hoverProvider = hoverProvider;
         this.updateSettings();
     }
 
@@ -189,66 +196,11 @@ export class RealTimeAnalysisProvider {
         document: vscode.TextDocument,
         violations: SecurityViolation[]
     ): void {
-        const diagnostics: vscode.Diagnostic[] = [];
-
-        for (const violation of violations) {
-            const diagnostic = this.createDiagnostic(violation);
-            diagnostics.push(diagnostic);
-        }
-
-        this.diagnosticCollection.set(document.uri, diagnostics);
-    }
-
-    /**
-     * Create a VS Code diagnostic from a security violation
-     */
-    private createDiagnostic(violation: SecurityViolation): vscode.Diagnostic {
-        // Create range (convert from 1-indexed to 0-indexed)
-        const line = Math.max(0, violation.lineNumber - 1);
-        const startChar = violation.columnNumber || 0;
-        const endChar = violation.endColumn || 100;
-
-        const range = new vscode.Range(
-            new vscode.Position(line, startChar),
-            new vscode.Position(line, endChar)
-        );
-
-        // Map severity
-        const severity = this.mapSeverity(violation.severity);
-
-        // Create diagnostic
-        const diagnostic = new vscode.Diagnostic(
-            range,
-            violation.message,
-            severity
-        );
-
-        diagnostic.source = 'PowerShield';
-        diagnostic.code = violation.ruleId;
-
-        // Add CWE link if available
-        if (violation.metadata?.CWE && violation.metadata.CWE.length > 0) {
-            const cweId = violation.metadata.CWE[0].replace('CWE-', '');
-            diagnostic.code = {
-                value: violation.ruleId,
-                target: vscode.Uri.parse(`https://cwe.mitre.org/data/definitions/${cweId}.html`)
-            };
-        }
-
-        return diagnostic;
-    }
-
-    /**
-     * Map PowerShield severity to VS Code severity
-     */
-    private mapSeverity(severity: number): vscode.DiagnosticSeverity {
-        switch (severity) {
-            case 4: return vscode.DiagnosticSeverity.Error;    // Critical
-            case 3: return vscode.DiagnosticSeverity.Error;    // High
-            case 2: return vscode.DiagnosticSeverity.Warning;  // Medium
-            case 1: return vscode.DiagnosticSeverity.Information; // Low
-            default: return vscode.DiagnosticSeverity.Warning;
-        }
+        // Use the new DiagnosticsProvider
+        this.diagnosticsProvider.updateDiagnostics(document, violations);
+        
+        // Update hover provider with violations
+        this.hoverProvider.updateViolations(document, violations);
     }
 
     /**

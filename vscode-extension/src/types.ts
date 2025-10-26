@@ -26,6 +26,15 @@ export interface SecurityViolation {
     code: string;
     filePath: string;
     ruleId: string;
+    ruleTitle?: string;
+    explanation?: string;
+    cweId?: string;
+    compliance?: string[];
+    hasQuickFix?: boolean;
+    fixPreview?: string;
+    bestPractices?: string[];
+    deprecated?: boolean;
+    confidence?: number;
     metadata?: {
         CWE?: string[];
         MitreAttack?: string[];
