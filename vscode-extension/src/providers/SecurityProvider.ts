@@ -5,15 +5,19 @@
 
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
+import * as path from 'path';
+import * as os from 'os';
 import { PowerShieldEngine } from '../core/PowerShieldEngine';
 import {
     SecurityViolation,
     AnalysisResult,
     CacheEntry
 } from '../types';
+import { CacheManager, CacheConfig } from '../performance/CacheManager';
 
 export class PSSecurityProvider {
     private analysisCache: Map<string, CacheEntry> = new Map();
+    private cacheManager: CacheManager | null = null;
     private powerShieldEngine: PowerShieldEngine;
     private maxCacheSize: number = 100; // Max number of cached results
     private cacheEnabled: boolean = true;
@@ -21,6 +25,42 @@ export class PSSecurityProvider {
     constructor(engine: PowerShieldEngine) {
         this.powerShieldEngine = engine;
         this.updateCacheSettings();
+        this.initializeCacheManager();
+    }
+    
+    /**
+     * Initialize the advanced cache manager
+     */
+    private initializeCacheManager(): void {
+        const config = this.powerShieldEngine.getConfiguration();
+        
+        // Parse max cache size
+        const maxSize = config.performance.maxCacheSize;
+        const match = maxSize.match(/(\d+)\s*(MB|GB)?/i);
+        let maxMemorySize = 100 * 1024 * 1024; // Default 100MB in bytes
+        
+        if (match) {
+            const size = parseInt(match[1]);
+            const unit = match[2]?.toUpperCase() || 'MB';
+            maxMemorySize = unit === 'GB' ? size * 1024 * 1024 * 1024 : size * 1024 * 1024;
+        }
+        
+        // Setup disk cache path
+        const cacheDir = path.join(os.tmpdir(), 'powershield-cache');
+        
+        const cacheConfig: CacheConfig = {
+            maxMemorySize,
+            diskCachePath: cacheDir,
+            ttl: 24 * 60 * 60 * 1000, // 24 hours
+            enableDiskCache: true
+        };
+        
+        try {
+            this.cacheManager = new CacheManager(cacheConfig);
+        } catch (error) {
+            console.error('Failed to initialize cache manager:', error);
+            this.cacheManager = null;
+        }
     }
 
     /**
@@ -39,6 +79,11 @@ export class PSSecurityProvider {
             // Estimate ~1KB per cached entry, so 100MB = 100,000 entries
             this.maxCacheSize = unit === 'GB' ? size * 1000000 : size * 1000;
         }
+        
+        // Reinitialize cache manager with new settings if needed
+        if (this.cacheEnabled && !this.cacheManager) {
+            this.initializeCacheManager();
+        }
     }
 
     /**
@@ -48,7 +93,15 @@ export class PSSecurityProvider {
         const content = document.getText();
         const cacheKey = this.generateCacheKey(content);
         
-        // Check cache if enabled
+        // Try cache manager first if available
+        if (this.cacheEnabled && this.cacheManager) {
+            const cached = await this.cacheManager.get(cacheKey);
+            if (cached) {
+                return cached;
+            }
+        }
+        
+        // Fallback to simple cache
         if (this.cacheEnabled && this.analysisCache.has(cacheKey)) {
             const cached = this.analysisCache.get(cacheKey)!;
             cached.lastAccessed = Date.now();
@@ -61,8 +114,11 @@ export class PSSecurityProvider {
             content
         );
         
-        // Cache results
-        if (this.cacheEnabled) {
+        // Cache results with cache manager
+        if (this.cacheEnabled && this.cacheManager) {
+            await this.cacheManager.set(cacheKey, result.violations);
+        } else if (this.cacheEnabled) {
+            // Fallback to simple cache
             this.cacheResult(cacheKey, result.violations, content);
         }
         
@@ -136,26 +192,54 @@ export class PSSecurityProvider {
     /**
      * Clear the cache
      */
-    clearCache(): void {
+    async clearCache(): Promise<void> {
+        if (this.cacheManager) {
+            await this.cacheManager.clear();
+        }
         this.analysisCache.clear();
     }
 
     /**
      * Get cache statistics
      */
-    getCacheStats(): { size: number; maxSize: number; hitRate?: number } {
-        return {
+    async getCacheStats(): Promise<{ size: number; maxSize: number; hitRate?: number; advanced?: any }> {
+        const basicStats = {
             size: this.analysisCache.size,
             maxSize: this.maxCacheSize
         };
+        
+        if (this.cacheManager) {
+            const advancedStats = await this.cacheManager.getStats();
+            return {
+                ...basicStats,
+                hitRate: advancedStats.hitRate,
+                advanced: advancedStats
+            };
+        }
+        
+        return basicStats;
     }
 
     /**
      * Invalidate cache for a specific document
      */
-    invalidateDocument(document: vscode.TextDocument): void {
+    async invalidateDocument(document: vscode.TextDocument): Promise<void> {
         const content = document.getText();
         const cacheKey = this.generateCacheKey(content);
+        
+        if (this.cacheManager) {
+            await this.cacheManager.invalidate(cacheKey);
+        }
         this.analysisCache.delete(cacheKey);
+    }
+    
+    /**
+     * Dispose resources
+     */
+    async dispose(): Promise<void> {
+        if (this.cacheManager) {
+            await this.cacheManager.dispose();
+        }
+        this.analysisCache.clear();
     }
 }
