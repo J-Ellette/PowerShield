@@ -1,12 +1,11 @@
 # PowerShield - Comprehensive PowerShell Security Platform
 
-![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/J-Ellette/PowerShellTestingSuite/powershell-security.yml?branch=main)
-![License](https://img.shields.io/github/license/J-Ellette/PowerShellTestingSuite)
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/J-Ellette/PowerShield/powershell-security.yml?branch=main)
+![License](https://img.shields.io/github/license/J-Ellette/PowerShield)
 ![Version](https://img.shields.io/badge/version-1.8.0-blue) <br>
 [![PowerShield - PowerShell Security Analysis](https://github.com/J-Ellette/PowerShield/actions/workflows/powershell-security.yml/badge.svg)](https://github.com/J-Ellette/PowerShield/actions/workflows/powershell-security.yml) <br>
-![Static Badge](https://img.shields.io/badge/Language-PowerShell-blue) ![Static Badge](https://img.shields.io/badge/Language-TypeScript-blue)
-
-> **📢 Rebranded:** Formerly known as PowerShell Testing Suite, now **PowerShield**. All references, configuration files, and outputs have been updated. See [Migration Guide](docs/MIGRATION_GUIDE.md) for details.
+![Static Badge](https://img.shields.io/badge/Platform-Windows-blue) ![Static Badge](https://img.shields.io/badge/Platform-Linux-blue) ![Static Badge](https://img.shields.io/badge/Platform-macOS-blue) <br>
+![Static Badge](https://img.shields.io/badge/Language-PowerShell-blue) ![Static Badge](https://img.shields.io/badge/Language-TypeScript-blue) ![Static Badge](https://img.shields.io/badge/Language-Dockerfile-blue)
 
 **PowerShield** is a comprehensive security analysis platform for PowerShell scripts that integrates with GitHub Actions, provides AI-powered auto-fixes, and offers multiple deployment options.
 
