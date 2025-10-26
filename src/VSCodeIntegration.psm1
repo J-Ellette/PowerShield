@@ -345,6 +345,7 @@ class VSCodeIntegration {
             }
             
             # Use Test-ModuleManifest for validation
+            [object]$manifestWarnings = @()
             [object]$manifest = Test-ModuleManifest -Path $manifestPath -ErrorAction Stop -WarningVariable manifestWarnings
             $results.isValid = $true
             $results.warnings = $manifestWarnings
