@@ -348,7 +348,8 @@ function registerCommands(
     const openDocumentationCommand = vscode.commands.registerCommand(
         'powershield.openDocumentation',
         async (ruleId: string) => {
-            const url = `https://docs.powershield.dev/rules/${ruleId}`;
+            // Use GitHub rules documentation until docs site is ready
+            const url = `https://github.com/J-Ellette/PowerShield/tree/main/rules`;
             await vscode.env.openExternal(vscode.Uri.parse(url));
         }
     );

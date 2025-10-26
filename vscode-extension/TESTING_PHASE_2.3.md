@@ -120,13 +120,13 @@ Test that all features work together:
 ## Known Limitations
 
 1. Some hover commands may not be fully implemented yet:
-   - "Learn More" opens docs.powershield.dev (may not exist)
+   - "Learn More" opens GitHub rules directory (dedicated docs site coming soon)
    - "Generate AI Fix" requires AI provider configuration
    - "Suppress" may show placeholder behavior
 
-2. Tree view updates may require manual refresh after file changes
+2. Tree view updates require manual refresh after file changes (automatic updates planned for Phase 2.4)
 
-3. Diagnostic links work but docs.powershield.dev is not yet live
+3. CWE links work and open the official MITRE CWE database
 
 ## Troubleshooting
 

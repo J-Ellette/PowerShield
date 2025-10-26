@@ -254,8 +254,8 @@ See `TESTING_PHASE_2.3.md` for detailed testing guide.
 
 ## Known Limitations
 
-1. **Documentation Links:** `docs.powershield.dev` domain is not yet live
-2. **Tree View Auto-Update:** Tree view doesn't auto-update on file changes (requires manual refresh)
+1. **Documentation Links:** Currently points to GitHub rules directory. Future versions will use a dedicated documentation site.
+2. **Tree View Auto-Update:** Tree view doesn't auto-update on file changes (requires manual refresh). Future enhancement will add file system watcher for automatic updates.
 3. **Compliance Data:** Compliance information depends on metadata from PowerShell analyzer
 4. **Best Practices:** Best practices content may be sparse for some rules
 
