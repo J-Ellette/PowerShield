@@ -6,6 +6,13 @@ echo "Phase 2.4 Implementation Verification"
 echo "=========================================="
 echo ""
 
+# Check if vscode-extension directory exists
+if [ ! -d "vscode-extension" ]; then
+    echo "❌ Error: vscode-extension directory not found"
+    echo "   Please run this script from the repository root"
+    exit 1
+fi
+
 # Check TypeScript compilation
 echo "1. Checking TypeScript compilation..."
 cd vscode-extension
@@ -78,8 +85,17 @@ echo ""
 
 # Count lines of code
 echo "5. Code statistics..."
-TOTAL_LINES=$(find src/performance -name "*.ts" -exec wc -l {} + | tail -1 | awk '{print $1}')
-echo "   ℹ️  Total lines in performance module: $TOTAL_LINES"
+if [ -d "src/performance" ]; then
+    TOTAL_LINES=$(find src/performance -name "*.ts" -exec wc -l {} + 2>/dev/null | tail -1 | awk '{print $1}')
+    if [ -n "$TOTAL_LINES" ] && [ "$TOTAL_LINES" -gt 0 ]; then
+        echo "   ℹ️  Total lines in performance module: $TOTAL_LINES"
+    else
+        echo "   ⚠️  Could not count lines in performance module"
+    fi
+else
+    echo "   ❌ src/performance directory not found"
+    exit 1
+fi
 echo ""
 
 # Check documentation
@@ -99,8 +115,15 @@ echo ""
 
 # Check package.json for dependencies
 echo "7. Checking dependencies..."
-if grep -q "worker_threads" src/performance/BackgroundAnalyzer.ts; then
-    echo "   ✅ Worker threads support present"
+if [ -f "src/performance/BackgroundAnalyzer.ts" ]; then
+    if grep -q "import.*worker_threads" src/performance/BackgroundAnalyzer.ts; then
+        echo "   ✅ Worker threads support properly imported"
+    else
+        echo "   ⚠️  Worker threads import not found in expected format"
+    fi
+else
+    echo "   ❌ BackgroundAnalyzer.ts not found"
+    exit 1
 fi
 echo ""
 
