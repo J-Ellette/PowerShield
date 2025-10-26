@@ -7,8 +7,6 @@
 ![Static Badge](https://img.shields.io/badge/Platform-Windows-blue) ![Static Badge](https://img.shields.io/badge/Platform-Linux-blue) ![Static Badge](https://img.shields.io/badge/Platform-macOS-blue) <br>
 ![Static Badge](https://img.shields.io/badge/Language-PowerShell-blue) ![Static Badge](https://img.shields.io/badge/Language-TypeScript-blue) ![Static Badge](https://img.shields.io/badge/Language-Dockerfile-blue)
 
-> **📢 Rebranded:** Formerly known as PowerShell Testing Suite, now **PowerShield**. All references, configuration files, and outputs have been updated. See [Migration Guide](docs/MIGRATION_GUIDE.md) for details.
-
 **PowerShield** is a comprehensive security analysis platform for PowerShell scripts that integrates with GitHub Actions, provides AI-powered auto-fixes, and offers multiple deployment options.
 
 ## 📚 Version History & Evolution
