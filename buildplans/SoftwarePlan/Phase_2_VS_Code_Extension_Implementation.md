@@ -1,5 +1,7 @@
-PowerShield Phase 2: VS Code Extension Implementation
-Phase 2: VS Code Extension with Multi-AI Auto-Fix (Weeks 5-8)
+# PowerShield Phase 2: VS Code Extension Implementation
+
+## Phase 2: VS Code Extension with Multi-AI Auto-Fix (Weeks 5-8)
+
 2.1 Extension Core Architecture
 
 File: vscode-extension/src/extension.ts
@@ -21,7 +23,7 @@ let telemetryService: TelemetryService;
 
 export async function activate(context: vscode.ExtensionContext) {
     extensionContext = context;
-    
+
     // Initialize services
     await initializeServices();
     
@@ -43,7 +45,7 @@ export async function activate(context: vscode.ExtensionContext) {
 async function initializeServices() {
     const config = new ConfigurationManager();
     telemetryService = new TelemetryService(extensionContext, config);
-    
+
     securityProvider = new PSSecurityProvider(extensionContext);
     aiFixProvider = new AIFixProvider(config, telemetryService);
     diagnosticsProvider = new SecurityDiagnosticsProvider();
@@ -56,7 +58,7 @@ function registerProviders() {
     // Diagnostic collection for security issues
     const diagnosticCollection = vscode.languages.createDiagnosticCollection('psts-security');
     extensionContext.subscriptions.push(diagnosticCollection);
-    
+
     // Code action provider for AI fixes
     const codeActionProvider = vscode.languages.registerCodeActionsProvider(
         'powershell',
@@ -102,7 +104,7 @@ function registerCommands() {
         vscode.commands.registerCommand('psts.toggleRealTimeAnalysis', toggleRealTimeAnalysis),
         vscode.commands.registerCommand('psts.refreshSecurityView', () => treeProvider.refresh())
     ];
-    
+
     extensionContext.subscriptions.push(...commands);
 }
 
@@ -114,7 +116,7 @@ function setupEventListeners() {
             await debounceAnalysis(event.document);
         }
     });
-    
+
     // Analysis on document open/save
     const documentOpenListener = vscode.workspace.onDidOpenTextDocument(async (document) => {
         if (document.languageId === 'powershell') {
@@ -163,7 +165,7 @@ async function analyzeCurrentFile() {
         vscode.window.showWarningMessage('Please open a PowerShell file to analyze');
         return;
     }
-    
+
     await analyzeDocument(editor.document);
     vscode.window.showInformationMessage('Security analysis completed');
 }
@@ -176,7 +178,7 @@ async function analyzeWorkspace() {
     }, async (progress, token) => {
         const files = await vscode.workspace.findFiles('**/*.{ps1,psm1,psd1}', '**/node_modules/**');
         let completed = 0;
-        
+
         for (const file of files) {
             if (token.isCancellationRequested) break;
             
@@ -199,7 +201,7 @@ async function analyzeDocument(document: vscode.TextDocument): Promise<void> {
     try {
         const violations = await securityProvider.analyzeDocument(document);
         await diagnosticsProvider.updateDiagnostics(document, violations);
-        
+
         // Update context for command availability
         vscode.commands.executeCommand('setContext', 'psts.hasViolations', violations.length > 0);
         
@@ -220,7 +222,7 @@ async function applyAllFixes() {
         vscode.window.showWarningMessage('Please open a PowerShell file to apply fixes');
         return;
     }
-    
+
     await vscode.window.withProgress({
         location: vscode.ProgressLocation.Notification,
         title: "🤖 Generating AI fixes...",
@@ -259,7 +261,7 @@ async function applyAllFixes() {
 async function autoFixOnSave(document: vscode.TextDocument) {
     const violations = await securityProvider.analyzeDocument(document);
     if (violations.length === 0) return;
-    
+
     // Only apply high-confidence fixes automatically
     const highConfidenceFixes = await aiFixProvider.generateFixesForDocument(
         document, 
@@ -291,7 +293,7 @@ async function configureAI() {
             retainContextWhenHidden: true
         }
     );
-    
+
     panel.webview.html = await getAIConfigurationHTML();
     
     // Handle messages from the webview
@@ -319,7 +321,7 @@ async function showSecurityReport() {
             retainContextWhenHidden: true
         }
     );
-    
+
     const reportData = await generateSecurityReport();
     panel.webview.html = getSecurityReportHTML(reportData);
 }
@@ -328,7 +330,7 @@ async function toggleRealTimeAnalysis() {
     const config = vscode.workspace.getConfiguration('psts');
     const current = config.get('enableRealTimeAnalysis');
     await config.update('enableRealTimeAnalysis', !current, vscode.ConfigurationTarget.Global);
-    
+
     const status = !current ? 'enabled' : 'disabled';
     vscode.window.showInformationMessage(`Real-time analysis ${status}`);
 }
@@ -336,7 +338,7 @@ async function toggleRealTimeAnalysis() {
 async function showWelcomeMessage() {
     const config = vscode.workspace.getConfiguration('psts');
     const hasShownWelcome = extensionContext.globalState.get('hasShownWelcome', false);
-    
+
     if (!hasShownWelcome) {
         const result = await vscode.window.showInformationMessage(
             'Welcome to PowerShield PowerShell Security Analyzer! Would you like to configure AI providers for auto-fixes?',
@@ -671,41 +673,65 @@ export class CopilotProvider implements AIProvider {
     private buildSecurityPrompt(violation: SecurityViolation, context: string): string {
         const templates = {
             'InsecureHashAlgorithms': `
+
 # Fix insecure hash algorithm
+
 # Replace MD5/SHA1 with SHA256 or higher
+
 # Before: ${violation.code}
-# After:`,
-            
-            'CredentialExposure': `
-# Fix credential exposure
-# Replace plaintext passwords with secure handling
-# Before: ${violation.code}
-# After:`,
-            
-            'CommandInjection': `
-# Fix command injection vulnerability
-# Remove Invoke-Expression with user input
-# Before: ${violation.code}
-# After:`,
-            
-            'CertificateValidation': `
-# Fix certificate validation bypass
-# Ensure proper certificate validation
-# Before: ${violation.code}
+
 # After:`
+
+            'CredentialExposure': `
+
+# Fix credential exposure
+
+# Replace plaintext passwords with secure handling
+
+# Before: ${violation.code}
+
+# After:`
+
+            'CommandInjection': `
+
+# Fix command injection vulnerability
+
+# Remove Invoke-Expression with user input
+
+# Before: ${violation.code}
+
+# After:`
+
+            'CertificateValidation': `
+
+# Fix certificate validation bypass
+
+# Ensure proper certificate validation
+
+# Before: ${violation.code}
+
+# After:`
+
         };
 
         const template = templates[violation.ruleId as keyof typeof templates] || `
+
 # Fix PowerShell security issue: ${violation.ruleId}
+
 # ${violation.message}
+
 # Before: ${violation.code}
-# After:`;
+
+# After:`
 
         return `${template}
-# Context:
+
+# Context
+
 ${context}
 
-# Fixed PowerShell code:`;
+# Fixed PowerShell code:`
+
     }
 
     private async requestCopilotCompletion(prompt: string, violation: SecurityViolation): Promise<string | null> {
@@ -1140,6 +1166,7 @@ export class ClaudeProvider implements AIProvider {
         return `You are a PowerShell security expert. I need you to fix a security vulnerability in PowerShell code.
 
 **Security Issue:**
+
 - Rule: ${violation.ruleId}
 - Message: ${violation.message}
 - Severity: ${violation.severity}
@@ -1160,6 +1187,7 @@ For ${violation.ruleId}:
 ${this.getSecurityGuideline(violation.ruleId)}
 
 **Requirements:**
+
 1. Fix the security vulnerability while maintaining functionality
 2. Provide only the corrected line of PowerShell code
 3. Ensure the fix follows PowerShell best practices
@@ -1180,6 +1208,7 @@ The confidence should be a number between 0 and 1, where 1 means you're complete
     private getSecurityGuideline(ruleId: string): string {
         const guidelines = {
             'InsecureHashAlgorithms': `
+
 - Replace MD5 with SHA256 or higher (SHA384, SHA512)
 - Replace SHA1 with SHA256 or higher
 - Use Get-FileHash -Algorithm SHA256 instead of -Algorithm MD5
@@ -1212,7 +1241,7 @@ The confidence should be a number between 0 and 1, where 1 means you're complete
             // Extract JSON from the response
             const jsonMatch = responseText.match(/```json\s*([\s\S]*?)\s*```/);
             let jsonText = jsonMatch ? jsonMatch[1] : responseText;
-            
+
             // Clean up any remaining artifacts
             jsonText = jsonText.trim();
             if (!jsonText.startsWith('{')) {
@@ -1320,14 +1349,14 @@ The confidence should be a number between 0 and 1, where 1 means you're complete
         const closeBraces = (code.match(/\}/g) || []).length;
         const openParens = (code.match(/\(/g) || []).length;
         const closeParens = (code.match(/\)/g) || []).length;
-        
+
         return openBraces === closeBraces && openParens === closeParens;
     }
 
     private async getApiKey(): Promise<string | undefined> {
         // Try to get from secure storage first
         let apiKey = await vscode.workspace.getConfiguration('psts').get<string>('claudeApiKey');
-        
+
         if (!apiKey) {
             // Prompt user for API key
             apiKey = await vscode.window.showInputBox({

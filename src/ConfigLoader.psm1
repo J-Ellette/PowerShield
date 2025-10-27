@@ -287,7 +287,6 @@ function Read-SimpleYaml {
     $lines = Get-Content -Path $Path
     $config = @{}
     $currentSection = $null
-    $currentKey = $null
 
     foreach ($line in $lines) {
         # Skip comments and empty lines
@@ -297,34 +296,43 @@ function Read-SimpleYaml {
 
         # Top-level keys
         if ($line -match '^([a-z_]+):\s*(.*)$') {
-            $key = $matches[1]
+            $keyName = $matches[1]
             $value = $matches[2].Trim()
             
             if ($value -eq '') {
                 # This is a section
-                $currentSection = $key
-                $config[$key] = @{}
+                $currentSection = $keyName
+                $config[$keyName] = @{}
             } else {
                 # Simple value
-                $config[$key] = $value
+                $config[$keyName] = $this.ParseYamlValue($value)
             }
         }
         # Nested keys
         elseif ($line -match '^\s+([a-z_]+):\s*(.*)$' -and $currentSection) {
-            $key = $matches[1]
+            $keyName = $matches[1]
             $value = $matches[2].Trim()
             
-            # Try to parse value
-            if ($value -eq 'true') { $value = $true }
-            elseif ($value -eq 'false') { $value = $false }
-            elseif ($value -match '^\d+$') { $value = [int]$value }
-            elseif ($value -match '^"(.+)"$') { $value = $matches[1] }
-            
-            $config[$currentSection][$key] = $value
+            $config[$currentSection][$keyName] = $this.ParseYamlValue($value)
         }
     }
 
     return $config
+}
+
+function ParseYamlValue {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Value
+    )
+    
+    # Try to parse value
+    if ($Value -eq 'true') { return $true }
+    elseif ($Value -eq 'false') { return $false }
+    elseif ($Value -match '^\d+$') { return [int]$Value }
+    elseif ($Value -match '^"(.+)"$') { return $matches[1] }
+    else { return $Value }
 }
 
 function Export-PowerShieldConfiguration {

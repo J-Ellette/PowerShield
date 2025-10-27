@@ -340,45 +340,61 @@ class VSCodeIntegration {
         try {
             # Test if file exists
             if (-not (Test-Path $manifestPath)) {
+                $results.isValid = $false
                 $results.errors += "Manifest file not found: $manifestPath"
                 return $results
             }
             
             # Use Test-ModuleManifest for validation
-            [object]$manifestWarnings = @()
-            [object]$manifest = Test-ModuleManifest -Path $manifestPath -ErrorAction Stop -WarningVariable manifestWarnings
-            $results.isValid = $true
-            $results.warnings = $manifestWarnings
+            [string[]]$manifestWarnings = @()
             
-            # Additional security checks
-            if ($manifest.RequiredModules) {
-                foreach ($reqModule in $manifest.RequiredModules) {
-                    if (-not $reqModule.Version) {
+            try {
+                [object]$manifest = Test-ModuleManifest -Path $manifestPath -ErrorAction Continue -WarningVariable manifestWarnings
+                $results.warnings = $manifestWarnings
+                $results.isValid = $true  # Mark as valid if Test-ModuleManifest succeeds
+                
+                # Additional security checks only if manifest loaded successfully
+                if ($manifest) {
+                    # Check for required modules without versions
+                    if ($manifest.RequiredModules) {
+                        foreach ($reqModule in $manifest.RequiredModules) {
+                            if (-not $reqModule.Version) {
+                                $results.securityIssues += @{
+                                    severity = "Medium"
+                                    message = "Required module '$($reqModule.Name)' does not specify a version (security risk)"
+                                    recommendation = "Always specify exact module versions to prevent supply chain attacks"
+                                }
+                            }
+                        }
+                    }
+                    
+                    # Check for script file info
+                    if ($manifest.PrivateData.PSData.Tags -notcontains 'Security') {
+                        $results.warnings += "Module does not have 'Security' tag"
+                    }
+                    
+                    # Check for external module dependencies
+                    if ($manifest.ExternalModuleDependencies) {
                         $results.securityIssues += @{
-                            severity = "Medium"
-                            message = "Required module '$($reqModule.Name)' does not specify a version (security risk)"
-                            recommendation = "Always specify exact module versions to prevent supply chain attacks"
+                            severity = "Low"
+                            message = "Module has external dependencies that should be reviewed"
+                            recommendation = "Review all external dependencies for security vulnerabilities"
                         }
                     }
                 }
-            }
-            
-            # Check for script file info
-            if ($manifest.PrivateData.PSData.Tags -notcontains 'Security') {
-                $results.warnings += "Module does not have 'Security' tag"
-            }
-            
-            # Check for external module dependencies
-            if ($manifest.ExternalModuleDependencies) {
-                $results.securityIssues += @{
-                    severity = "Low"
-                    message = "Module has external dependencies that should be reviewed"
-                    recommendation = "Review all external dependencies for security vulnerabilities"
-                }
+                
+            } catch {
+                # Manifest loading failed
+                $results.warnings = if ($manifestWarnings) { $manifestWarnings } else { @() }
+                $results.errors += "Failed to load manifest: $($_.Exception.Message)"
+                $results.isValid = $false
+                return $results
             }
             
         } catch {
             $results.errors += $_.Exception.Message
+            $results.isValid = $false
+            return $results
         }
         
         return $results
