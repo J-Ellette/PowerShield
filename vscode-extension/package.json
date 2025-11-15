@@ -1,0 +1,253 @@
+{
+  "name": "powershield",
+  "displayName": "PowerShield Security Analyzer",
+  "description": "Real-time PowerShell security analysis with AI-powered fixes",
+  "version": "2.1.0",
+  "publisher": "powershield",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages",
+    "Testing"
+  ],
+  "keywords": [
+    "powershell",
+    "security",
+    "analysis",
+    "linter",
+    "vulnerability"
+  ],
+  "activationEvents": [
+    "onLanguage:powershell",
+    "workspaceContains:**/*.ps1",
+    "workspaceContains:**/*.psm1",
+    "workspaceContains:**/*.psd1"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "powershield.analyzeFile",
+        "title": "Analyze Current File",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.analyzeWorkspace",
+        "title": "Analyze Workspace",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.generateAIFix",
+        "title": "Generate AI Fix",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.applyTemplateFix",
+        "title": "Apply Template Fix",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.explainViolation",
+        "title": "Explain Security Issue",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.suppressViolation",
+        "title": "Suppress Violation",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.showSecurityDashboard",
+        "title": "Show Security Dashboard",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.configureSettings",
+        "title": "Configure Settings",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.openDocumentation",
+        "title": "Open Documentation",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.jumpToViolation",
+        "title": "Jump to Violation",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.refreshSecurityTree",
+        "title": "Refresh Security Overview",
+        "category": "PowerShield",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "powershield.showScopeViolations",
+        "title": "Show Scope Violations",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.applyAllScopeFixes",
+        "title": "Apply All Scope Fixes",
+        "category": "PowerShield"
+      },
+      {
+        "command": "powershield.showDocumentSummary",
+        "title": "Show Document Security Summary",
+        "category": "PowerShield"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "powershield-security",
+          "name": "PowerShield Security",
+          "icon": "$(shield)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "powershield-security",
+        "contents": "No security issues detected.\n[Analyze Workspace](command:powershield.analyzeWorkspace)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "powershield.refreshSecurityTree",
+          "when": "view == powershield-security",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "PowerShield",
+      "properties": {
+        "powershield.realTimeAnalysis.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable real-time security analysis as you type"
+        },
+        "powershield.realTimeAnalysis.debounceMs": {
+          "type": "number",
+          "default": 1000,
+          "description": "Delay in milliseconds before analysis runs after typing stops"
+        },
+        "powershield.realTimeAnalysis.backgroundAnalysis": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run analysis in background worker threads"
+        },
+        "powershield.aiProvider.primary": {
+          "type": "string",
+          "enum": ["github-models", "openai", "anthropic", "azure-openai", "template-based"],
+          "default": "github-models",
+          "description": "Primary AI provider for fix generation"
+        },
+        "powershield.aiProvider.fallback": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["github-models", "openai", "anthropic", "azure-openai", "template-based"]
+          },
+          "default": ["template-based"],
+          "description": "Fallback AI providers when primary fails"
+        },
+        "powershield.aiProvider.confidenceThreshold": {
+          "type": "number",
+          "default": 0.8,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum confidence score for AI-generated fixes (0-1)"
+        },
+        "powershield.ui.showInlineDecorations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline security decorations in the editor"
+        },
+        "powershield.ui.showHoverExplanations": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show detailed explanations on hover"
+        },
+        "powershield.ui.showCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show CodeLens with security metrics"
+        },
+        "powershield.performance.enableCaching": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable analysis result caching"
+        },
+        "powershield.performance.maxCacheSize": {
+          "type": "string",
+          "default": "100MB",
+          "description": "Maximum cache size (e.g., '100MB', '1GB')"
+        },
+        "powershield.performance.enableIncrementalAnalysis": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable incremental analysis for better performance"
+        },
+        "powershield.rules.enabled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of enabled rule IDs (empty = all rules enabled)"
+        },
+        "powershield.rules.disabled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "List of disabled rule IDs"
+        },
+        "powershield.suppressions.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable suppression comments (e.g., # powershield-disable-line)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/test-electron": "^2.3.8",
+    "eslint": "^8.55.0",
+    "typescript": "^5.3.3",
+    "@vscode/vsce": "^2.22.0"
+  },
+  "dependencies": {
+    "crypto": "^1.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/J-Ellette/PowerShield"
+  },
+  "bugs": {
+    "url": "https://github.com/J-Ellette/PowerShield/issues"
+  },
+  "homepage": "https://github.com/J-Ellette/PowerShield#readme",
+  "license": "MIT"
+}

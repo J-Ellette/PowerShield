@@ -1,0 +1,158 @@
+# PowerShield Configuration
+# Complete configuration reference for PowerShield - Comprehensive PowerShell Security Platform
+
+version: "1.0"
+
+# Analysis Settings
+analysis:
+  severity_threshold: "Medium"  # Low, Medium, High, Critical
+  max_file_size: 10485760  # 10MB
+  timeout_seconds: 30
+  parallel_analysis: true
+  worker_threads: 0  # 0 = auto-detect based on CPU cores, or specify number
+  
+  # Path exclusions (glob patterns)
+  exclude_paths:
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/*.min.ps1"
+    - ".github/**"
+  
+  # File exclusions
+  exclude_files:
+    - "*.tests.ps1"
+
+# Rule Configuration
+rules:
+  # Enable/disable rules and override severity
+  InsecureHashAlgorithms:
+    enabled: true
+    severity: "High"
+  
+  CredentialExposure:
+    enabled: true
+    severity: "Critical"
+    check_comments: true
+    min_password_length: 8
+  
+  CommandInjection:
+    enabled: true
+    severity: "Critical"
+  
+  CertificateValidation:
+    enabled: true
+    severity: "High"
+
+# Auto-Fix Configuration
+autofix:
+  enabled: true
+  provider: "github-models"  # github-models, openai, azure, claude, template
+  model: "gpt-4o-mini"
+  max_fixes: 10
+  confidence_threshold: 0.8
+  apply_automatically: false
+  fallback_to_templates: true
+  
+  # Per-rule auto-fix control
+  rule_fixes:
+    InsecureHashAlgorithms: true
+    CredentialExposure: true
+    CommandInjection: false  # Too risky for auto-fix
+    CertificateValidation: false
+
+# Suppression Settings
+suppressions:
+  require_justification: true
+  max_duration_days: 90
+  allow_permanent: false
+
+# Reporting
+reporting:
+  formats: ["sarif", "json", "markdown"]
+  output_dir: ".powershield-reports"
+  
+  sarif:
+    include_code_flows: true
+    include_fixes: true
+  
+  markdown:
+    include_severity_summary: true
+    include_top_issues: 5
+
+# CI/CD Integration
+ci:
+  fail_on: ["Critical", "High"]
+  max_warnings: 50
+  baseline_mode: false
+  baseline_file: ".powershield-baseline.sarif"
+  incremental_mode: false  # Only analyze changed files (Git-aware)
+
+# Git Hooks Configuration
+hooks:
+  enabled: true
+  block_on: ["Critical", "High"]  # Severities that block commits
+  auto_fix: false  # Apply fixes automatically before commit (experimental)
+  skip_on_no_violations: true
+
+# Performance & Optimization
+performance:
+  enable_cache: true
+  cache_dir: ".powershield-cache"
+  cache_max_age: 86400  # 24 hours in seconds
+  track_metrics: true
+
+# Webhooks (optional)
+webhooks:
+  - url: "https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+    format: "Slack"
+    events: ["critical_found", "analysis_complete"]
+    severity_filter: ["Critical", "High"]
+    
+  - url: "https://outlook.office.com/webhook/YOUR/TEAMS/WEBHOOK"
+    format: "Teams"
+    events: ["critical_found"]
+    severity_filter: ["Critical"]
+
+# Integrations
+integrations:
+  pester:
+    enabled: false
+    security_tests: "./tests/Security.Tests.ps1"
+    run_after_fixes: true
+    validate_fixes: true
+
+# Custom Rules Configuration
+custom_rules:
+  enabled: true
+  directories:
+    - "./rules/custom"       # Your organization's custom rules
+    - "./rules/community"    # Community-contributed rules
+  auto_load: true           # Automatically load rules on analyzer initialization
+
+# Baseline Management
+baseline:
+  enabled: true
+  auto_create: false         # Automatically create baseline on first run
+  baseline_file: ".powershield-baseline.json"
+  track_changes: true        # Track changes over time
+  fail_on_new_violations: true  # Fail build if new violations are introduced
+
+# Compliance Reporting
+compliance:
+  enabled: true
+  frameworks:
+    - NIST                   # NIST Cybersecurity Framework
+    - CIS                    # CIS PowerShell Security Benchmark
+    - OWASP                  # OWASP Top 10
+    - SOC2                   # SOC 2 Type II
+    - PCI-DSS                # PCI-DSS 4.0
+    - HIPAA                  # HIPAA Security Rule
+  minimum_compliance: 80     # Minimum compliance percentage required
+  generate_reports: true     # Generate compliance reports automatically
+  report_format: "markdown"  # Format: markdown, html, json
+
+# Enterprise Settings (optional)
+# enterprise:
+#   audit_log: true
+#   compliance_reporting: true
+#   policy_enforcement: true

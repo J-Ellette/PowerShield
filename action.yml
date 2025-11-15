@@ -1,0 +1,42 @@
+name: 'PowerShield: PowerShell Security Scanner'
+description: 'Uses AI to automatically fix PowerShell security violations'
+author: 'PowerShield Project'
+
+inputs:
+  github-token:
+    description: 'GitHub token with appropriate permissions'
+    required: true
+  violations-file:
+    description: 'Path to the PowerShield violations JSON file'
+    required: true
+    default: 'powershield-results.json'
+  max-fixes:
+    description: 'Maximum number of fixes to apply'
+    required: false
+    default: '10'
+  confidence-threshold:
+    description: 'Minimum confidence level for applying fixes (0.0-1.0)'
+    required: false
+    default: '0.8'
+  apply-fixes:
+    description: 'Whether to actually apply the fixes to files'
+    required: false
+    default: 'false'
+
+outputs:
+  fixes-applied:
+    description: 'Whether any fixes were applied'
+  fixes-count:
+    description: 'Number of fixes applied'
+  fixed-rules:
+    description: 'Comma-separated list of rules that were fixed'
+  fix-details:
+    description: 'Detailed description of fixes applied'
+
+runs:
+  using: 'node20'
+  main: 'dist/index.js'
+
+branding:
+  icon: 'shield'
+  color: 'yellow'

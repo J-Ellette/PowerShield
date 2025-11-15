@@ -1,0 +1,36 @@
+# Community Custom Rule: Detect Write-Host Usage
+# Detects Write-Host which is not pipeline-friendly and can cause issues
+
+rule:
+  id: "WriteHostDetection"
+  name: "Write-Host Usage Detection"
+  description: "Detects Write-Host usage which is not pipeline-friendly and should be avoided in favor of Write-Output or Write-Information"
+  severity: "Low"
+  category: "BestPractices"
+  
+  patterns:
+    - type: "command"
+      command: "Write-Host"
+      message: "Write-Host detected - consider using Write-Output or Write-Information for pipeline-friendly output"
+  
+  remediation: |
+    Write-Host writes directly to the console and cannot be captured or redirected.
+    Use alternatives based on your needs:
+    
+    - Write-Output: For pipeline output that can be captured
+    - Write-Information: For informational messages (PowerShell 5.0+)
+    - Write-Verbose: For diagnostic messages
+    - Write-Debug: For debugging information
+    
+    # Avoid
+    Write-Host "Processing item: $item"
+    
+    # Better options
+    Write-Output "Processing item: $item"  # Can be captured
+    Write-Information "Processing item: $item" -InformationAction Continue
+    Write-Verbose "Processing item: $item" -Verbose
+  
+  metadata:
+    author: "PowerShield Community"
+    version: "1.0.0"
+    tags: ["pipeline", "best-practices", "output"]

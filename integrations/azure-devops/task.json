@@ -1,0 +1,83 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Microsoft/azure-pipelines-task-lib/master/tasks.schema.json",
+  "id": "powershield-security-task",
+  "name": "PowerShieldSecurityAnalysis",
+  "friendlyName": "PowerShield Security Analysis",
+  "description": "Run PowerShield security analysis on PowerShell scripts",
+  "helpMarkDown": "[More Information](https://github.com/J-Ellette/PowerShield)",
+  "category": "Test",
+  "author": "PowerShield",
+  "version": {
+    "Major": 1,
+    "Minor": 0,
+    "Patch": 0
+  },
+  "instanceNameFormat": "PowerShield Security Analysis",
+  "inputs": [
+    {
+      "name": "workspacePath",
+      "type": "filePath",
+      "label": "Workspace Path",
+      "defaultValue": "$(Build.SourcesDirectory)",
+      "required": true,
+      "helpMarkDown": "Path to the PowerShell scripts to analyze"
+    },
+    {
+      "name": "configFile",
+      "type": "filePath",
+      "label": "Configuration File",
+      "defaultValue": ".powershield.yml",
+      "required": false,
+      "helpMarkDown": "Path to the PowerShield configuration file"
+    },
+    {
+      "name": "severityThreshold",
+      "type": "pickList",
+      "label": "Severity Threshold",
+      "defaultValue": "Medium",
+      "required": false,
+      "options": {
+        "Low": "Low",
+        "Medium": "Medium",
+        "High": "High",
+        "Critical": "Critical"
+      },
+      "helpMarkDown": "Minimum severity level to report"
+    },
+    {
+      "name": "failOnCritical",
+      "type": "boolean",
+      "label": "Fail on Critical Issues",
+      "defaultValue": "true",
+      "required": false,
+      "helpMarkDown": "Fail the build if critical security issues are found"
+    },
+    {
+      "name": "enableSuppressions",
+      "type": "boolean",
+      "label": "Enable Suppressions",
+      "defaultValue": "true",
+      "required": false,
+      "helpMarkDown": "Enable suppression comments in scripts"
+    },
+    {
+      "name": "outputFormats",
+      "type": "string",
+      "label": "Output Formats",
+      "defaultValue": "sarif,junit,markdown",
+      "required": false,
+      "helpMarkDown": "Comma-separated list of output formats (sarif, junit, markdown, json, csv)"
+    }
+  ],
+  "execution": {
+    "PowerShell3": {
+      "target": "powershield-task.ps1",
+      "platforms": [
+        "windows",
+        "linux",
+        "macOS"
+      ],
+      "workingDirectory": "$(currentDirectory)"
+    }
+  }
+}

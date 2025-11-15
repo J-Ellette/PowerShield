@@ -1,0 +1,19 @@
+# Custom PowerShield Rule Template - Parameter Detection
+# This template demonstrates how to detect commands with specific parameters
+
+rule:
+  id: "CustomRule004"
+  name: "Detect Unsafe Parameter"
+  description: "Detects command with unsafe parameter usage"
+  severity: "High"
+  category: "Security"
+  
+  patterns:
+    - type: "parameter"
+      command: "Invoke-Command"
+      parameter: "UnsafeOption"
+      value: "Enabled"  # Optional: specific value to match
+      message: "Command with unsafe parameter detected"
+  
+  remediation: |
+    Do not use the -UnsafeOption parameter. It creates security risks.

@@ -1,0 +1,238 @@
+# PowerShield Secure-by-Default Configuration
+# This configuration emphasizes security over convenience
+# Recommended for production environments and enterprise deployments
+
+version: "1.0"
+
+# Analysis Settings - Conservative and thorough
+analysis:
+  severity_threshold: "High"  # Only allow High or lower severity issues (Conservative default)
+  fail_fast: true            # Stop immediately on critical issues
+  require_justification: true # All suppressions must have documented reasons
+  max_file_size: 10485760    # 10MB limit
+  timeout_seconds: 30
+  parallel_analysis: true
+  worker_threads: 0
+  
+  # Strict path exclusions - explicit is better than implicit
+  exclude_paths:
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/*.min.ps1"
+    - ".github/**"
+  
+  exclude_files:
+    - "*.tests.ps1"
+
+# Rule Configuration - All enabled with strict settings
+rules:
+  # Core Security Rules
+  InsecureHashAlgorithms:
+    enabled: true
+    severity: "High"
+  
+  CredentialExposure:
+    enabled: true
+    severity: "Critical"
+    check_comments: true
+    min_password_length: 12  # Stricter than default
+  
+  CommandInjection:
+    enabled: true
+    severity: "Critical"
+  
+  CertificateValidation:
+    enabled: true
+    severity: "High"
+  
+  # All PowerShell-specific rules enabled
+  ExecutionPolicyBypass:
+    enabled: true
+    severity: "Critical"
+  
+  ScriptBlockLogging:
+    enabled: true
+    severity: "High"
+  
+  UnsafePSRemoting:
+    enabled: true
+    severity: "Critical"
+  
+  DangerousModules:
+    enabled: true
+    severity: "High"
+  
+  PowerShellVersionDowngrade:
+    enabled: true
+    severity: "Critical"
+  
+  UnsafeDeserialization:
+    enabled: true
+    severity: "High"
+  
+  PrivilegeEscalation:
+    enabled: true
+    severity: "Critical"
+  
+  ScriptInjection:
+    enabled: true
+    severity: "Critical"
+  
+  UnsafeReflection:
+    enabled: true
+    severity: "High"
+  
+  PowerShellConstrainedMode:
+    enabled: true
+    severity: "Medium"
+  
+  UnsafeFileInclusion:
+    enabled: true
+    severity: "Critical"
+  
+  PowerShellWebRequests:
+    enabled: true
+    severity: "High"
+  
+  # Advanced threat detection
+  PowerShellObfuscationDetection:
+    enabled: true
+    severity: "Critical"
+  
+  DownloadCradleDetection:
+    enabled: true
+    severity: "Critical"
+  
+  PersistenceMechanismDetection:
+    enabled: true
+    severity: "Critical"
+  
+  CredentialHarvestingDetection:
+    enabled: true
+    severity: "Critical"
+  
+  LateralMovementDetection:
+    enabled: true
+    severity: "Critical"
+  
+  DataExfiltrationDetection:
+    enabled: true
+    severity: "Critical"
+  
+  AMSIEvasion:
+    enabled: true
+    severity: "Critical"
+  
+  ETWEvasion:
+    enabled: true
+    severity: "Critical"
+
+# Auto-Fix Configuration - Disabled by default for security
+autofix:
+  enabled: false             # Require explicit opt-in
+  provider: "github-models"
+  model: "gpt-4o-mini"
+  max_fixes: 5               # Conservative limit
+  confidence_threshold: 0.9  # High confidence required (90%)
+  apply_automatically: false # NEVER auto-apply without review
+  fallback_to_templates: true
+  
+  # Per-rule auto-fix control - Only safe rules enabled
+  rule_fixes:
+    InsecureHashAlgorithms: true
+    CredentialExposure: false     # Too risky for auto-fix
+    CommandInjection: false       # Too risky for auto-fix
+    CertificateValidation: false  # Too risky for auto-fix
+
+# Suppression Settings - Strict enforcement
+suppressions:
+  require_justification: true  # All suppressions need documented reasons
+  max_duration_days: 30        # Short expiry (30 days instead of 90)
+  allow_permanent: false       # No permanent suppressions
+
+# Reporting - Comprehensive
+reporting:
+  formats: ["sarif", "json", "markdown"]
+  output_dir: ".powershield-reports"
+  
+  sarif:
+    include_code_flows: true
+    include_fixes: true
+  
+  markdown:
+    include_severity_summary: true
+    include_top_issues: 10  # Show more issues
+
+# CI/CD Integration - Strict failure conditions
+ci:
+  fail_on: ["Critical", "High"]  # Fail build on any Critical or High severity
+  max_warnings: 10               # Low tolerance for warnings
+  baseline_mode: true            # Track violations over time
+  baseline_file: ".powershield-baseline.sarif"
+  incremental_mode: false        # Always do full analysis
+
+# Git Hooks Configuration - Strict blocking
+hooks:
+  enabled: true
+  block_on: ["Critical", "High", "Medium"]  # Block on Medium and above
+  auto_fix: false  # Never auto-fix in hooks
+  skip_on_no_violations: true
+
+# Performance & Optimization
+performance:
+  enable_cache: true
+  cache_dir: ".powershield-cache"
+  cache_max_age: 43200  # 12 hours (shorter cache for security)
+  track_metrics: true
+
+# Webhooks - Security alerts
+webhooks:
+  - url: ""  # Configure your security team webhook
+    format: "Slack"
+    events: ["critical_found", "high_found"]  # Alert on critical/high only
+    severity_filter: ["Critical", "High"]
+
+# Integrations
+integrations:
+  pester:
+    enabled: true
+    security_tests: "./tests/Security.Tests.ps1"
+    run_after_fixes: true
+    validate_fixes: true
+
+# Custom Rules Configuration
+custom_rules:
+  enabled: true
+  directories:
+    - "./rules/custom"
+    - "./rules/community"
+  auto_load: true
+
+# Baseline Management - Strict tracking
+baseline:
+  enabled: true
+  auto_create: false
+  baseline_file: ".powershield-baseline.json"
+  track_changes: true
+  fail_on_new_violations: true  # Fail if new violations introduced
+
+# Compliance Reporting - All frameworks
+compliance:
+  enabled: true
+  frameworks:
+    - NIST
+    - CIS
+    - OWASP
+    - SOC2
+    - PCI-DSS
+    - HIPAA
+  minimum_compliance: 90     # High bar for compliance
+  generate_reports: true
+  report_format: "markdown"
+
+# Enterprise Settings
+enterprise:
+  audit_log: true              # Enable comprehensive audit logging
+  compliance_reporting: true   # Generate compliance reports
+  policy_enforcement: true     # Enforce organizational policies

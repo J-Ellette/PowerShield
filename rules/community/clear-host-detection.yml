@@ -1,0 +1,39 @@
+# Community Custom Rule: Detect Clear-Host in Production Scripts
+# Detects use of Clear-Host which can hide important information in logs
+
+rule:
+  id: "ClearHostDetection"
+  name: "Clear-Host Usage Detection"
+  description: "Detects Clear-Host or cls usage which can hide important output in production environments"
+  severity: "Low"
+  category: "BestPractices"
+  cwe: ["CWE-117"]  # Improper Output Neutralization for Logs
+  
+  patterns:
+    - type: "command"
+      command: "Clear-Host"
+      message: "Clear-Host detected - may hide important output in production logs"
+    
+    - type: "command"
+      command: "cls"
+      message: "cls detected - may hide important output in production logs"
+  
+  remediation: |
+    Avoid using Clear-Host or cls in production scripts as they can hide
+    important diagnostic information in logs.
+    
+    Instead, use proper logging and let the calling environment control output.
+    
+    # Avoid
+    Clear-Host
+    Write-Host "Starting process..."
+    
+    # Better
+    Write-Verbose "Starting process..." -Verbose
+    # Or use proper logging
+    Write-Log "Starting process..."
+  
+  metadata:
+    author: "PowerShield Community"
+    version: "1.0.0"
+    tags: ["logging", "production", "best-practices"]

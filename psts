@@ -1,0 +1,7 @@
+#!/usr/bin/env pwsh
+# PSTS launcher script - forwards all arguments to psts.ps1
+$ErrorActionPreference = 'Stop'
+$scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Get-Location }
+$scriptPath = Join-Path $scriptDir "psts.ps1"
+& $scriptPath @args
+exit $LASTEXITCODE

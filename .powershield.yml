@@ -1,0 +1,65 @@
+# PowerShield Configuration
+version: "1.0"
+
+analysis:
+  severity_threshold: "Medium"
+  max_file_size: 10485760
+  timeout_seconds: 30
+  parallel_analysis: false
+  exclude_paths:
+    - "tests"
+    - "tests/**"
+    - "**/tests/**"
+    - "**/TestScripts/**"
+    - "**/*.Tests.ps1"
+    - "**/*.tests.ps1"
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/*.min.ps1"
+    - ".github/**"
+    - "rules/community/**"
+
+rules:
+  InsecureHashAlgorithms:
+    enabled: true
+    severity: "High"
+  CredentialExposure:
+    enabled: true
+    severity: "Critical"
+  CommandInjection:
+    enabled: true
+    severity: "Critical"
+  CertificateValidation:
+    enabled: true
+    severity: "High"
+  UnsafeFileInclusion:
+    enabled: true
+    severity: "Medium"
+  DangerousModules:
+    enabled: true
+    severity: "Medium"
+
+autofix:
+  enabled: true
+  provider: "github-models"
+  model: "gpt-4o-mini"
+  confidence_threshold: 0.8
+  rule_fixes:
+    InsecureHashAlgorithms: true
+    CredentialExposure: true
+    CommandInjection: false
+    CertificateValidation: false
+
+ci:
+  fail_on: ["Critical", "High"]
+  generate_sarif: true
+  upload_artifacts: true
+  clean_analysis: true
+
+hooks:
+  enabled: true
+  block_on: ["Critical", "High"]
+
+suppressions:
+  allow_permanent: true  # Allow permanent suppressions for legitimate cases
+  default_expiry_days: 365  # Default expiry for date-based suppressions

@@ -1,0 +1,264 @@
+# Complete Azure DevOps Pipeline Example with PowerShield
+# This example demonstrates a full security analysis workflow
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+  paths:
+    include:
+      - '*.ps1'
+      - '*.psm1'
+      - '*.psd1'
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  powershieldVersion: '1.0.0'
+  severityThreshold: 'High'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: SecurityAnalysis
+    displayName: 'Security Analysis'
+    jobs:
+      - job: PowerShieldScan
+        displayName: 'PowerShield Security Scan'
+        steps:
+          - checkout: self
+            fetchDepth: 0
+            displayName: 'Checkout Repository'
+          
+          - task: PowerShell@2
+            displayName: 'Setup PowerShield'
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                Write-Host "Setting up PowerShield..."
+                # In production, install from marketplace or package registry
+                git clone --depth 1 https://github.com/J-Ellette/PowerShield.git /tmp/powershield
+                Write-Host "PowerShield setup complete"
+          
+          - task: PowerShell@2
+            displayName: 'Run PowerShield Analysis'
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              workingDirectory: '$(Build.SourcesDirectory)'
+              script: |
+                # Import modules
+                Import-Module /tmp/powershield/src/PowerShellSecurityAnalyzer.psm1 -Force
+                Import-Module /tmp/powershield/src/CIAdapter.psm1 -Force
+                
+                Write-Host "Starting PowerShield security analysis..."
+                Write-Host "Workspace: $(Build.SourcesDirectory)"
+                Write-Host "Severity Threshold: $(severityThreshold)"
+                
+                # Detect CI context
+                $ciAdapter = New-CIAdapter
+                $context = $ciAdapter.GetContext()
+                Write-Host "CI Environment: $($context.Provider)"
+                Write-Host "Repository: $($context.Repository)"
+                Write-Host "Branch: $($context.Branch)"
+                
+                # Run analysis with suppressions
+                $result = Invoke-WorkspaceAnalysis -WorkspacePath "$(Build.SourcesDirectory)" -EnableSuppressions
+                
+                if ($null -eq $result -or $null -eq $result.Results) {
+                    Write-Warning "Analysis returned no results"
+                    exit 0
+                }
+                
+                Write-Host "Files analyzed: $($result.FilesAnalyzed)"
+                Write-Host "Total violations: $($result.TotalViolations)"
+                
+                # Collect all violations
+                $allViolations = @()
+                foreach ($fileResult in $result.Results) {
+                    if ($fileResult.Violations) {
+                        $allViolations += $fileResult.Violations
+                    }
+                }
+                
+                # Filter by severity threshold
+                $severityMap = @{ 'Low' = 1; 'Medium' = 2; 'High' = 3; 'Critical' = 4 }
+                $thresholdValue = $severityMap['$(severityThreshold)']
+                $filteredViolations = $allViolations | Where-Object {
+                    $sevVal = $severityMap[$_.Severity.ToString()]
+                    $sevVal -ge $thresholdValue
+                }
+                
+                # Count by severity
+                $criticalCount = ($filteredViolations | Where-Object { $_.Severity -eq 'Critical' }).Count
+                $highCount = ($filteredViolations | Where-Object { $_.Severity -eq 'High' }).Count
+                $mediumCount = ($filteredViolations | Where-Object { $_.Severity -eq 'Medium' }).Count
+                $lowCount = ($filteredViolations | Where-Object { $_.Severity -eq 'Low' }).Count
+                
+                Write-Host "Critical: $criticalCount"
+                Write-Host "High: $highCount"
+                Write-Host "Medium: $mediumCount"
+                Write-Host "Low: $lowCount"
+                
+                # Export results
+                $exportData = @{
+                    metadata = @{
+                        version = '$(powershieldVersion)'
+                        timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+                        ci = @{
+                            provider = $context.Provider
+                            repository = $context.Repository
+                            branch = $context.Branch
+                            sha = $context.CommitSha
+                            buildId = $context.BuildId
+                            jobUrl = $context.JobUrl
+                        }
+                    }
+                    summary = @{
+                        TotalCritical = $criticalCount
+                        TotalHigh = $highCount
+                        TotalMedium = $mediumCount
+                        TotalLow = $lowCount
+                        FilesAnalyzed = $result.FilesAnalyzed
+                    }
+                    violations = $filteredViolations
+                }
+                
+                # Create reports directory
+                New-Item -ItemType Directory -Force -Path ".powershield-reports" | Out-Null
+                
+                # Save JSON
+                $exportData | ConvertTo-Json -Depth 10 | Out-File '.powershield-reports/analysis.json' -Encoding UTF8
+                
+                # Generate SARIF
+                . /tmp/powershield/scripts/Convert-ToSARIF.ps1
+                Convert-ToSARIF -InputFile '.powershield-reports/analysis.json' -OutputFile '.powershield-reports/analysis.sarif'
+                
+                # Generate JUnit XML
+                $junit = @"
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="PowerShield Security Analysis" tests="$($filteredViolations.Count)" failures="$($criticalCount + $highCount)">
+  <testsuite name="SecurityRules" tests="$($filteredViolations.Count)" failures="$($criticalCount + $highCount)">
+"@
+                foreach ($violation in $filteredViolations) {
+                    $className = $violation.RuleId
+                    $testName = "$($violation.FilePath):$($violation.LineNumber)"
+                    $message = $violation.Message -replace '<', '&lt;' -replace '>', '&gt;' -replace '&', '&amp;'
+                    
+                    if ($violation.Severity -in @('Critical', 'High')) {
+                        $junit += @"
+    <testcase classname="$className" name="$testName">
+      <failure message="$message" type="$($violation.Severity)"/>
+    </testcase>
+"@
+                    } else {
+                        $junit += @"
+    <testcase classname="$className" name="$testName"/>
+"@
+                    }
+                }
+                $junit += @"
+  </testsuite>
+</testsuites>
+"@
+                $junit | Out-File '.powershield-reports/analysis.junit.xml' -Encoding UTF8
+                
+                # Generate Markdown report
+                . /tmp/powershield/scripts/Generate-SecurityReport.ps1
+                Generate-SecurityReport -InputFile '.powershield-reports/analysis.json' -OutputFile '.powershield-reports/security-report.md'
+                
+                # Set pipeline variables
+                Write-Host "##vso[task.setvariable variable=ViolationsCount]$($filteredViolations.Count)"
+                Write-Host "##vso[task.setvariable variable=CriticalCount]$criticalCount"
+                Write-Host "##vso[task.setvariable variable=HighCount]$highCount"
+                
+                # Fail if critical issues found
+                if ($criticalCount -gt 0) {
+                    Write-Host "##vso[task.logissue type=error]Found $criticalCount critical security violations"
+                    Write-Host "##vso[task.complete result=Failed;]DONE"
+                    exit 1
+                }
+                
+                Write-Host "##vso[task.complete result=Succeeded;]Security analysis complete"
+          
+          - task: PublishTestResults@2
+            displayName: 'Publish Security Test Results'
+            condition: always()
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: '.powershield-reports/analysis.junit.xml'
+              testRunTitle: 'PowerShield Security Analysis'
+              failTaskOnFailedTests: false
+          
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publish Security Reports'
+            condition: always()
+            inputs:
+              PathtoPublish: '.powershield-reports'
+              ArtifactName: 'powershield-reports'
+              publishLocation: 'Container'
+          
+          - task: PowerShell@2
+            displayName: 'Post PR Comment'
+            condition: and(always(), eq(variables['Build.Reason'], 'PullRequest'))
+            inputs:
+              targetType: 'inline'
+              pwsh: true
+              script: |
+                try {
+                    $report = Get-Content '.powershield-reports/security-report.md' -Raw -ErrorAction Stop
+                    $criticalCount = [int]'$(CriticalCount)'
+                    $violationsCount = [int]'$(ViolationsCount)'
+                    
+                    # Build comment with summary
+                    $comment = "## 🛡️ PowerShield Security Analysis Results`n`n"
+                    
+                    if ($criticalCount -gt 0) {
+                        $comment += "⚠️ **$criticalCount Critical Security Issues Found!**`n`n"
+                    } elseif ($violationsCount -gt 0) {
+                        $comment += "✅ No critical issues, but $violationsCount other violations found`n`n"
+                    } else {
+                        $comment += "✅ No security violations found!`n`n"
+                    }
+                    
+                    $comment += "<details>`n<summary>📊 View Full Report</summary>`n`n"
+                    $comment += $report
+                    $comment += "`n</details>`n"
+                    
+                    # Post comment using Azure DevOps REST API
+                    $token = "$(System.AccessToken)"
+                    $org = "$(System.TeamFoundationCollectionUri)"
+                    $project = "$(System.TeamProject)"
+                    $repo = "$(Build.Repository.Name)"
+                    $prId = "$(System.PullRequest.PullRequestId)"
+                    
+                    $uri = "$org$project/_apis/git/repositories/$repo/pullRequests/$prId/threads?api-version=7.0"
+                    $body = @{
+                        comments = @(
+                            @{
+                                parentCommentId = 0
+                                content = $comment
+                                commentType = 1
+                            }
+                        )
+                        status = 1
+                    } | ConvertTo-Json -Depth 10
+                    
+                    $headers = @{
+                        Authorization = "Bearer $token"
+                        "Content-Type" = "application/json"
+                    }
+                    
+                    Invoke-RestMethod -Uri $uri -Method Post -Body $body -Headers $headers
+                    Write-Host "PR comment posted successfully"
+                } catch {
+                    Write-Warning "Failed to post PR comment: $_"
+                }

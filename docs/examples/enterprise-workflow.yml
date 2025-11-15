@@ -1,0 +1,158 @@
+# Example: PowerShield with Enterprise Features
+# This workflow demonstrates webhook notifications and Pester integration
+
+name: PowerShield Enterprise Security Analysis
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  security-analysis:
+    name: Security Analysis with Enterprise Features
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Install-Module -Name Pester -Force -SkipPublisherCheck -MinimumVersion 5.0
+      
+      - name: Run PowerShield Analysis
+        id: analysis
+        shell: pwsh
+        run: |
+          Import-Module ./src/PowerShellSecurityAnalyzer.psm1 -Force
+          Import-Module ./src/ConfigLoader.psm1 -Force
+          
+          Write-Host "Starting PowerShield security analysis..."
+          $config = Import-PowerShieldConfiguration -WorkspacePath "."
+          $result = Invoke-WorkspaceAnalysis -WorkspacePath "." -EnableSuppressions
+          
+          # Save results
+          $exportData = @{
+              TotalViolations = $result.TotalViolations
+              FilesAnalyzed = $result.FilesAnalyzed
+              Summary = $result.Summary
+              Results = $result.Results
+          }
+          
+          $exportData | ConvertTo-Json -Depth 10 | Out-File 'powershield-results.json'
+      
+      - name: Send Webhook Notifications
+        if: always()
+        shell: pwsh
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
+        run: |
+          Import-Module ./src/WebhookNotifier.psm1 -Force
+          
+          $webhooks = @()
+          
+          # Slack webhook - send all analysis results
+          if ($env:SLACK_WEBHOOK_URL) {
+              $webhooks += @{
+                  url = $env:SLACK_WEBHOOK_URL
+                  format = 'Slack'
+                  events = @('analysis_complete')
+                  severity_filter = @('Critical', 'High')
+              }
+          }
+          
+          # Teams webhook - only critical alerts
+          if ($env:TEAMS_WEBHOOK_URL) {
+              $webhooks += @{
+                  url = $env:TEAMS_WEBHOOK_URL
+                  format = 'Teams'
+                  events = @('critical_found')
+                  severity_filter = @('Critical')
+              }
+          }
+          
+          if ($webhooks.Count -gt 0) {
+              try {
+                  $result = Get-Content 'powershield-results.json' -ErrorAction Stop | ConvertFrom-Json -AsHashtable
+                  $context = @{
+                      repository = '${{ github.repository }}'
+                      branch = '${{ github.ref_name }}'
+                      commit = '${{ github.sha }}'
+                      build_url = '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+                  }
+                  
+                  $notifier = New-WebhookNotifier -WebhookConfigs $webhooks
+                  Send-WebhookNotification -Notifier $notifier -Event 'analysis_complete' -AnalysisResult $result -Context $context
+                  Write-Host "✓ Webhook notifications sent"
+              } catch {
+                  Write-Warning "Failed to send webhook notifications: $_"
+              }
+          } else {
+              Write-Host "No webhook URLs configured. Add SLACK_WEBHOOK_URL or TEAMS_WEBHOOK_URL secrets to enable."
+          }
+      
+      - name: Generate and Run Security Tests
+        if: always()
+        shell: pwsh
+        run: |
+          Import-Module ./src/PesterIntegration.psm1 -Force
+          
+          try {
+              $result = Get-Content 'powershield-results.json' -ErrorAction Stop | ConvertFrom-Json -AsHashtable
+              $config = @{ enabled = $true; security_tests = './tests/Security.Tests.ps1' }
+              
+              $integration = New-PesterIntegration -Configuration $config
+              New-SecurityTests -Integration $integration -AnalysisResult $result
+              
+              if (Test-Path $integration.SecurityTestsPath) {
+                  $testResult = Invoke-SecurityTests -Integration $integration
+                  Write-Host "✓ Security tests: $($testResult.Passed) passed, $($testResult.Failed) failed"
+              }
+          } catch {
+              Write-Warning "Failed to run security tests: $_"
+          }
+      
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-test-results
+          path: |
+            tests/Security.Tests.ps1
+            tests/SecurityTestResults.xml
+          if-no-files-found: ignore
+      
+      - name: Generate SARIF
+        if: always()
+        shell: pwsh
+        run: |
+          # Dot-source to load the Convert-ToSARIF function
+          . ./scripts/Convert-ToSARIF.ps1
+          Convert-ToSARIF -InputFile 'powershield-results.json' -OutputFile 'powershield-results.sarif'
+      
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: powershield-results.sarif
+      
+      - name: Upload Analysis Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: powershield-results
+          path: |
+            powershield-results.json
+            powershield-results.sarif
